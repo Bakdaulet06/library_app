@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"net/http"
-
 	"library/internal/dto"
-	"library/internal/models"
 	"library/internal/services"
+	"net/http"
+	"strconv"
+	"strings"
 )
 
 type BookHandler struct {
@@ -17,56 +17,61 @@ func NewBookHandler(s services.BookService) *BookHandler {
 	return &BookHandler{service: s}
 }
 
-// ServeHTTP acts as the primary multiplexer for book-related endpoints
+// ServeHTTP handles all routed routing variations for /books and /books/ paths
 func (h *BookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	switch r.URL.Path {
-	case "/books":
-		if r.Method == http.MethodPost {
-			h.createBook(w, r)
-			return
-		}
-		if r.Method == http.MethodGet {
-			h.listAvailable(w, r)
-			return
-		}
-		respondWithError(w, http.StatusMethodNotAllowed, "method not allowed")
+	path := strings.TrimPrefix(r.URL.Path, "/books")
+	path = strings.Trim(path, "/")
 
-	case "/books/borrow":
-		if r.Method == http.MethodPost {
-			h.borrowBook(w, r)
+	switch r.Method {
+	case http.MethodPost:
+		if path == "" {
+			h.CreateBook(w, r)
 			return
 		}
-		respondWithError(w, http.StatusMethodNotAllowed, "method not allowed")
-
-	case "/books/return":
-		if r.Method == http.MethodPost {
-			h.returnBook(w, r)
+	case http.MethodGet:
+		if path == "" {
+			h.ListBooks(w, r)
 			return
 		}
-		respondWithError(w, http.StatusMethodNotAllowed, "method not allowed")
-
-	default:
-		respondWithError(w, http.StatusNotFound, "resource path not found")
+		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+			h.GetBook(w, r, id)
+			return
+		}
+	case http.MethodPut:
+		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+			h.UpdateBook(w, r, id)
+			return
+		}
+	case http.MethodDelete:
+		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+			h.DeleteBook(w, r, id)
+			return
+		}
 	}
+
+	http.Error(w, `{"error":"endpoint route or method pattern not found"}`, http.StatusNotFound)
 }
 
-func (h *BookHandler) createBook(w http.ResponseWriter, r *http.Request) {
+func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	var req dto.CreateBookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "malformed json payload")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		respondWithError(w, http.StatusUnprocessableEntity, err.Error())
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
 	book, err := h.service.CreateBook(r.Context(), req)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -74,67 +79,143 @@ func (h *BookHandler) createBook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(book)
 }
 
-func (h *BookHandler) listAvailable(w http.ResponseWriter, r *http.Request) {
-	books, err := h.service.ListAvailableBooks(r.Context())
+func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request, id int64) {
+	book, err := h.service.GetBookByID(r.Context(), id)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	json.NewEncoder(w).Encode(book)
+}
 
-	// Graceful fallback response: return an empty JSON array instead of a null value
-	if books == nil {
-		books = make([]models.Book, 0)
+func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
+	// Optional Query Lookup Parameter filter: /books?available=true
+	availableFilter := r.URL.Query().Get("available")
+
+	var books interface{}
+	var err error
+
+	if availableFilter == "true" {
+		books, err = h.service.ListAvailableBooks(r.Context())
+	} else {
+		books, err = h.service.ListAllBooks(r.Context())
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "internal runtime exception listing books"})
+		return
+	}
 	json.NewEncoder(w).Encode(books)
 }
 
-func (h *BookHandler) borrowBook(w http.ResponseWriter, r *http.Request) {
-	var req dto.BorrowBookRequest
+func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int64) {
+	var req dto.CreateBookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "malformed json payload")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		respondWithError(w, http.StatusUnprocessableEntity, err.Error())
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	book, err := h.service.UpdateBook(r.Context(), id, req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(book)
+}
+
+func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request, id int64) {
+	if err := h.service.DeleteBook(r.Context(), id); err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Transactional Action endpoints
+
+func (h *BookHandler) HandleBorrow(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed, use POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req dto.BorrowBookRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
 	if err := h.service.BorrowBook(r.Context(), req); err != nil {
-		// Differentiating client domain exceptions from true server crashes
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "book successfully checked out"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "book processing successfully leased and logged"})
 }
 
-func (h *BookHandler) returnBook(w http.ResponseWriter, r *http.Request) {
+func (h *BookHandler) HandleReturn(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed, use POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req dto.ReturnBookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "malformed json payload")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
 		return
 	}
 
 	if err := req.Validate(); err != nil {
-		respondWithError(w, http.StatusUnprocessableEntity, err.Error())
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
 	if err := h.service.ReturnBook(r.Context(), req); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "book successfully returned to inventory"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "asset safely returned and inventory incremented"})
 }
 
-// Global internal JSON error writer helper
-func respondWithError(w http.ResponseWriter, code int, message string) {
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+// Append this function to the bottom of internal/handlers/book_handler.go
+func (h *BookHandler) HandleListLoans(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed, use GET"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	loans, err := h.service.ListAllLoans(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "internal error retrieving structural loan listings"})
+		return
+	}
+
+	json.NewEncoder(w).Encode(loans)
 }

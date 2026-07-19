@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
-
 	"library/internal/dto"
 	"library/internal/models"
 	"library/internal/repositories"
@@ -14,9 +12,15 @@ import (
 
 type BookService interface {
 	CreateBook(ctx context.Context, req dto.CreateBookRequest) (*models.Book, error)
+	GetBookByID(ctx context.Context, id int64) (*models.Book, error)
 	ListAvailableBooks(ctx context.Context) ([]models.Book, error)
+	ListAllBooks(ctx context.Context) ([]models.Book, error)
+	UpdateBook(ctx context.Context, id int64, req dto.CreateBookRequest) (*models.Book, error)
+	DeleteBook(ctx context.Context, id int64) error
+
 	BorrowBook(ctx context.Context, req dto.BorrowBookRequest) error
 	ReturnBook(ctx context.Context, req dto.ReturnBookRequest) error
+	ListAllLoans(ctx context.Context) ([]models.Loan, error)
 }
 
 type bookService struct {
@@ -25,97 +29,121 @@ type bookService struct {
 	memberRepo repositories.MemberRepository
 }
 
-func NewBookService(db *sql.DB, br repositories.BookRepository, mr repositories.MemberRepository) BookService {
-	return &bookService{
-		db:         db,
-		bookRepo:   br,
-		memberRepo: mr,
-	}
+func NewBookService(db *sql.DB, bRepo repositories.BookRepository, mRepo repositories.MemberRepository) BookService {
+	return &bookService{db: db, bookRepo: bRepo, memberRepo: mRepo}
 }
 
 func (s *bookService) CreateBook(ctx context.Context, req dto.CreateBookRequest) (*models.Book, error) {
-	// Business Rule: Validate unique ISBN first
-	existing, err := s.bookRepo.GetByISBN(ctx, s.db, req.ISBN)
+	existing, err := s.bookRepo.GetByISBN(ctx, s.db, req.Isbn)
 	if err != nil {
-		return nil, fmt.Errorf("error verifying unique isbn: %w", err)
+		return nil, err
 	}
 	if existing != nil {
-		return nil, errors.New("a book with this isbn already exists")
+		return nil, errors.New("a book with this isbn code already exists inside the inventory system")
 	}
 
 	book := &models.Book{
 		Title:           req.Title,
 		Author:          req.Author,
-		ISBN:            req.ISBN,
+		Isbn:            req.Isbn,
 		AvailableCopies: req.AvailableCopies,
 	}
 
 	if err := s.bookRepo.Create(ctx, s.db, book); err != nil {
-		return nil, fmt.Errorf("failed to save book record: %w", err)
+		return nil, err
 	}
+	return book, nil
+}
 
+func (s *bookService) GetBookByID(ctx context.Context, id int64) (*models.Book, error) {
+	book, err := s.bookRepo.GetByID(ctx, s.db, id)
+	if err != nil {
+		return nil, err
+	}
+	if book == nil {
+		return nil, errors.New("book record not found")
+	}
 	return book, nil
 }
 
 func (s *bookService) ListAvailableBooks(ctx context.Context) ([]models.Book, error) {
-	books, err := s.bookRepo.ListAvailable(ctx, s.db)
+	return s.bookRepo.ListAvailable(ctx, s.db)
+}
+
+func (s *bookService) ListAllBooks(ctx context.Context) ([]models.Book, error) {
+	return s.bookRepo.ListAll(ctx, s.db)
+}
+
+func (s *bookService) UpdateBook(ctx context.Context, id int64, req dto.CreateBookRequest) (*models.Book, error) {
+	book, err := s.bookRepo.GetByID(ctx, s.db, id)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve available books: %w", err)
+		return nil, err
 	}
-	return books, nil
+	if book == nil {
+		return nil, errors.New("target book record not found")
+	}
+
+	if req.Isbn != book.Isbn {
+		duplicate, err := s.bookRepo.GetByISBN(ctx, s.db, req.Isbn)
+		if err != nil {
+			return nil, err
+		}
+		if duplicate != nil {
+			return nil, errors.New("another book has already claimed this updated isbn code")
+		}
+	}
+
+	book.Title = req.Title
+	book.Author = req.Author
+	book.Isbn = req.Isbn
+	book.AvailableCopies = req.AvailableCopies
+
+	if err := s.bookRepo.Update(ctx, s.db, book); err != nil {
+		return nil, err
+	}
+	return book, nil
+}
+
+func (s *bookService) DeleteBook(ctx context.Context, id int64) error {
+	return s.bookRepo.Delete(ctx, s.db, id)
 }
 
 func (s *bookService) BorrowBook(ctx context.Context, req dto.BorrowBookRequest) error {
-	// Atomic transaction initiation
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return err
 	}
-	// Defers structural clean up via rollback pattern
 	defer tx.Rollback()
 
-	// 1. Verify Member status explicitly
 	member, err := s.memberRepo.GetByID(ctx, tx, req.MemberID)
-	if err != nil {
-		return fmt.Errorf("database query error fetching member: %w", err)
-	}
-	if member == nil {
-		return errors.New("member profile does not exist")
+	if err != nil || member == nil {
+		return errors.New("checkout blocked: targeted member record does not exist")
 	}
 
-	// 2. Verify book profile exists and check stock limits
 	book, err := s.bookRepo.GetByID(ctx, tx, req.BookID)
-	if err != nil {
-		return fmt.Errorf("database query error fetching book: %w", err)
-	}
-	if book == nil {
-		return errors.New("book target profile does not exist")
-	}
-	if book.AvailableCopies <= 0 {
-		return errors.New("no available copies left in library inventory")
+	if err != nil || book == nil {
+		return errors.New("checkout blocked: targeted book record does not exist")
 	}
 
-	// 3. Prevent duplicate active borrowings
-	active, err := s.bookRepo.FindActiveLoan(ctx, tx, req.BookID, req.MemberID)
-	if err != nil {
-		return fmt.Errorf("database query checking loans: %w", err)
+	if book.AvailableCopies <= 0 {
+		return errors.New("checkout blocked: zero inventory balance remains for this book")
 	}
-	if active != nil {
+
+	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, req.BookID, req.MemberID)
+	if err != nil {
+		return err
+	}
+	if hasLoan {
 		return errors.New("this member has already borrowed this book and has not returned it yet")
 	}
 
-	// 4. Record the checkout transaction
-	loan := &models.Loan{
-		BookID:   req.BookID,
-		MemberID: req.MemberID,
-	}
-	if err := s.bookRepo.CreateLoan(ctx, tx, loan); err != nil {
-		return fmt.Errorf("failed to log loan statement: %w", err)
+	book.AvailableCopies--
+	if err := s.bookRepo.Update(ctx, tx, book); err != nil {
+		return fmt.Errorf("failed to decrement inventory: %w", err)
 	}
 
-	// 5. Decrement inventory level by 1
-	if err := s.bookRepo.UpdateCopies(ctx, tx, req.BookID, -1); err != nil {
-		return fmt.Errorf("failed to decrement book inventory: %w", err)
+	if err := s.bookRepo.CreateLoan(ctx, tx, req.BookID, req.MemberID); err != nil {
+		return fmt.Errorf("failed to register loan log: %w", err)
 	}
 
 	return tx.Commit()
@@ -124,29 +152,27 @@ func (s *bookService) BorrowBook(ctx context.Context, req dto.BorrowBookRequest)
 func (s *bookService) ReturnBook(ctx context.Context, req dto.ReturnBookRequest) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return err
 	}
 	defer tx.Rollback()
 
-	// 1. Trace exact ongoing loan record
-	loan, err := s.bookRepo.FindActiveLoan(ctx, tx, req.BookID, req.MemberID)
-	if err != nil {
-		return fmt.Errorf("database checking active loan record: %w", err)
-	}
-	if loan == nil {
-		return errors.New("no active borrowing transaction found matching this member and book combination")
+	book, err := s.bookRepo.GetByID(ctx, tx, req.BookID)
+	if err != nil || book == nil {
+		return errors.New("return blocked: target catalog book no longer exists")
 	}
 
-	// 2. Set the return timeline status
-	now := time.Now()
-	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, loan.ID, now); err != nil {
-		return fmt.Errorf("failed to process loan closure: %w", err)
+	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, req.BookID, req.MemberID); err != nil {
+		return err
 	}
 
-	// 3. Increment inventory level by 1
-	if err := s.bookRepo.UpdateCopies(ctx, tx, req.BookID, 1); err != nil {
-		return fmt.Errorf("failed to increment book inventory: %w", err)
+	book.AvailableCopies++
+	if err := s.bookRepo.Update(ctx, tx, book); err != nil {
+		return fmt.Errorf("failed to increment inventory: %w", err)
 	}
 
 	return tx.Commit()
+}
+
+func (s *bookService) ListAllLoans(ctx context.Context) ([]models.Loan, error) {
+	return s.bookRepo.ListLoans(ctx, s.db)
 }

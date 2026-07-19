@@ -11,20 +11,14 @@ type CreateMemberRequest struct {
 	Email string `json:"email"`
 }
 
-// Validate performs basic checks for missing fields and simple email formatting.
-func (req *CreateMemberRequest) Validate() error {
-	if strings.TrimSpace(req.Name) == "" {
-		return errors.New("name is required")
+// Validate ensures profile attributes adhere to operational layout rules.
+func (r *CreateMemberRequest) Validate() error {
+	if strings.TrimSpace(r.Name) == "" {
+		return errors.New("member name entry cannot be blank")
 	}
-
-	email := strings.TrimSpace(req.Email)
-	if email == "" {
-		return errors.New("email is required")
+	emailClean := strings.TrimSpace(r.Email)
+	if emailClean == "" || !strings.Contains(emailClean, "@") || !strings.Contains(emailClean, ".") {
+		return errors.New("a valid structural email address mapping is required")
 	}
-	// Pure standard library basic email validation
-	if !strings.Contains(email, "@") || !strings.Contains(email, ".") {
-		return errors.New("invalid email address format")
-	}
-
 	return nil
 }
