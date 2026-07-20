@@ -5,22 +5,24 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-
-	//"os"
+	"os"
 	"time"
 
 	"library/internal/handlers"
 	"library/internal/repositories"
 	"library/internal/services"
 
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq" // Pure Go PostgreSQL database driver registration
 )
 
 func main() {
 	// 1. Establish database connection configuration string
 	// (Adjust values if your local Postgres instance setup uses different credentials)
-	//connStr := os.Getenv("DATABASE_URL")
-	connStr := "host=localhost port=5432 user=postgres password=Aa123456 dbname=library_db sslmode=disable"
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, falling back to system environment variables")
+	}
+	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
 		connStr = "host=localhost port=5432 user=postgres password=secret dbname=library sslmode=disable"
 	}
