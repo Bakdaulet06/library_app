@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"library/internal/dto"
 	"library/internal/services"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -24,28 +25,47 @@ func (h *BookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/books")
 	path = strings.Trim(path, "/")
 
+	parts := strings.Split(path, "/")
+
 	switch r.Method {
+	case http.MethodGet:
+		// 1. Root: /books
+		if path == "" {
+			h.ListBooks(w, r)
+			return
+		}
+
+		// 2. Sub-resource: /books/genres/{id}
+		if len(parts) == 2 && parts[0] == "genres" {
+			genreID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				http.Error(w, `{"error":"invalid genre ID format"}`, http.StatusBadRequest)
+				return
+			}
+			h.GetBooksByGenreID(w, r, genreID)
+			return
+		}
+
+		// 3. Single resource: /books/{id}
+		if id, err := strconv.Atoi(path); err == nil {
+			h.GetBook(w, r, id)
+			return
+		}
+
 	case http.MethodPost:
 		if path == "" {
 			h.CreateBook(w, r)
 			return
 		}
-	case http.MethodGet:
-		if path == "" {
-			h.ListBooks(w, r)
-			return
-		}
-		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
-			h.GetBook(w, r, id)
-			return
-		}
+
 	case http.MethodPut:
-		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+		if id, err := strconv.Atoi(path); err == nil {
 			h.UpdateBook(w, r, id)
 			return
 		}
+
 	case http.MethodDelete:
-		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+		if id, err := strconv.Atoi(path); err == nil {
 			h.DeleteBook(w, r, id)
 			return
 		}
@@ -79,7 +99,7 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(book)
 }
 
-func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request, id int) {
 	book, err := h.service.GetBookByID(r.Context(), id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -110,7 +130,7 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(books)
 }
 
-func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int) {
 	var req dto.CreateBookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -133,7 +153,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int6
 	json.NewEncoder(w).Encode(book)
 }
 
-func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request, id int) {
 	if err := h.service.DeleteBook(r.Context(), id); err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -212,10 +232,24 @@ func (h *BookHandler) HandleListLoans(w http.ResponseWriter, r *http.Request) {
 
 	loans, err := h.service.ListAllLoans(r.Context())
 	if err != nil {
+		log.Printf("ERROR inside ListAllLoans: %v\n", err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "internal error retrieving structural loan listings"})
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": err.Error(), // <--- Temporarily send real error to Postman
+		})
 		return
 	}
 
 	json.NewEncoder(w).Encode(loans)
+}
+
+func (h *BookHandler) GetBooksByGenreID(w http.ResponseWriter, r *http.Request, genreID int) {
+	books, err := h.service.GetBooksByGenreID(r.Context(), genreID)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(books)
 }

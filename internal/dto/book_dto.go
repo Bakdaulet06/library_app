@@ -11,6 +11,8 @@ type CreateBookRequest struct {
 	Author          string `json:"author"`
 	Isbn            string `json:"isbn"`
 	AvailableCopies int    `json:"available_copies"`
+	GenreID         *int   `json:"genre_id"`
+	LibraryID       int    `json:"library_id"`
 }
 
 // Validate asserts data sanity for book creations and modifications.
@@ -28,6 +30,14 @@ func (r *CreateBookRequest) Validate() error {
 	if r.AvailableCopies < 0 {
 		return errors.New("available copies balance inventory cannot be negative numbers")
 	}
+	if r.GenreID != nil {
+		if *r.GenreID < 1 || *r.GenreID > 5 {
+			return errors.New("genre_id must be a positive integer greater than 0 and less than 5")
+		}
+	} else {
+		defaultGenre := 1
+		r.GenreID = &defaultGenre
+	}
 	return nil
 }
 
@@ -35,8 +45,9 @@ func (r *CreateBookRequest) Validate() error {
 
 // BorrowBookRequest ingests identification parameters to issue an active asset loan.
 type BorrowBookRequest struct {
-	BookID   int64 `json:"book_id"`
-	MemberID int64 `json:"member_id"`
+	BookID              int `json:"book_id"`
+	MemberID            int `json:"member_id"`
+	Borrowed_library_id int `json:"borrowed_library_id"`
 }
 
 // Validate confirms ID allocations are realistic before database processing.
@@ -47,13 +58,17 @@ func (r *BorrowBookRequest) Validate() error {
 	if r.MemberID <= 0 {
 		return errors.New("invalid processing library member_id parameter")
 	}
+	if r.Borrowed_library_id <= 0 {
+		return errors.New("invalid processing library borrowed_library_id parameter")
+	}
 	return nil
 }
 
 // ReturnBookRequest carries indicators necessary to conclude open loan segments.
 type ReturnBookRequest struct {
-	BookID   int64 `json:"book_id"`
-	MemberID int64 `json:"member_id"`
+	BookID              int `json:"book_id"`
+	MemberID            int `json:"member_id"`
+	Returned_library_id int `json:"returned_library_id"`
 }
 
 // Validate ensures entity key signatures match expectations.
@@ -63,6 +78,9 @@ func (r *ReturnBookRequest) Validate() error {
 	}
 	if r.MemberID <= 0 {
 		return errors.New("invalid return member processing member_id identification token")
+	}
+	if r.Returned_library_id <= 0 {
+		return errors.New("invalid processing library returned_library_id parameter")
 	}
 	return nil
 }

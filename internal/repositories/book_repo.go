@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"library/internal/models"
+	"log"
 )
 
 // GormExecutor standardizes query methods to support both standard *sql.DB pools and active *sql.Tx transactions transparently.
@@ -15,19 +17,22 @@ type GormExecutor interface {
 }
 
 type BookRepository interface {
-	Create(ctx context.Context, exec GormExecutor, b *models.Book) error
-	GetByID(ctx context.Context, exec GormExecutor, id int64) (*models.Book, error)
+	Create(ctx context.Context, exec GormExecutor, b *models.Book, libraryID, availableCopies int) error
+	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Book, error)
 	GetByISBN(ctx context.Context, exec GormExecutor, isbn string) (*models.Book, error)
+	GetByGenreID(ctx context.Context, exec GormExecutor, genreID int) ([]models.Book, error)
+	GetBooksByLibraryAndGenre(ctx context.Context, exec GormExecutor, libraryID, genreID int) ([]models.Book, error)
 	ListAvailable(ctx context.Context, exec GormExecutor) ([]models.Book, error)
 	ListAll(ctx context.Context, exec GormExecutor) ([]models.Book, error)
 	Update(ctx context.Context, exec GormExecutor, b *models.Book) error
-	Delete(ctx context.Context, exec GormExecutor, id int64) error
+	Delete(ctx context.Context, exec GormExecutor, id int) error
 
 	// Transactional & Borrowing State Assertions
-	HasActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int64) (bool, error)
-	CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID int64) error
-	UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID int64) error
+	HasActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int) (bool, error)
+	CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID, borrowed_library_id int) error
+	UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID, returned_library_id int) error
 	ListLoans(ctx context.Context, exec GormExecutor) ([]models.Loan, error)
+	GetLoansByMemberID(ctx context.Context, exec GormExecutor, memberID int) ([]models.Loan, error)
 }
 
 type bookRepository struct{}
@@ -36,16 +41,27 @@ func NewBookRepository() BookRepository {
 	return &bookRepository{}
 }
 
-func (r *bookRepository) Create(ctx context.Context, exec GormExecutor, b *models.Book) error {
-	query := `INSERT INTO books (title, author, isbn, available_copies) 
-	          VALUES ($1, $2, $3, $4) RETURNING id, created_at`
-	return exec.QueryRowContext(ctx, query, b.Title, b.Author, b.Isbn, b.AvailableCopies).Scan(&b.ID, &b.CreatedAt)
+func (r *bookRepository) Create(ctx context.Context, exec GormExecutor, b *models.Book, libraryID, availableCopies int) error {
+	// 1. Insert book
+	queryBook := `INSERT INTO books (title, author, isbn, genre_id) 
+                  VALUES ($1, $2, $3, $4) RETURNING id, created_at`
+	err := exec.QueryRowContext(ctx, queryBook, b.Title, b.Author, b.Isbn, b.GenreID).
+		Scan(&b.ID, &b.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	// 2. Insert inventory
+	queryInventory := `INSERT INTO book_inventory (library_id, book_id, available_copies) 
+                       VALUES ($1, $2, $3)`
+	_, err = exec.ExecContext(ctx, queryInventory, libraryID, b.ID, availableCopies)
+	return err
 }
 
-func (r *bookRepository) GetByID(ctx context.Context, exec GormExecutor, id int64) (*models.Book, error) {
-	query := `SELECT id, title, author, isbn, available_copies, created_at FROM books WHERE id = $1`
+func (r *bookRepository) GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Book, error) {
+	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books WHERE id = $1`
 	var b models.Book
-	err := exec.QueryRowContext(ctx, query, id).Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.AvailableCopies, &b.CreatedAt)
+	err := exec.QueryRowContext(ctx, query, id).Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -53,9 +69,9 @@ func (r *bookRepository) GetByID(ctx context.Context, exec GormExecutor, id int6
 }
 
 func (r *bookRepository) GetByISBN(ctx context.Context, exec GormExecutor, isbn string) (*models.Book, error) {
-	query := `SELECT id, title, author, isbn, available_copies, created_at FROM books WHERE isbn = $1`
+	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books WHERE isbn = $1`
 	var b models.Book
-	err := exec.QueryRowContext(ctx, query, isbn).Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.AvailableCopies, &b.CreatedAt)
+	err := exec.QueryRowContext(ctx, query, isbn).Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -63,7 +79,7 @@ func (r *bookRepository) GetByISBN(ctx context.Context, exec GormExecutor, isbn 
 }
 
 func (r *bookRepository) ListAvailable(ctx context.Context, exec GormExecutor) ([]models.Book, error) {
-	query := `SELECT id, title, author, isbn, available_copies, created_at FROM books WHERE available_copies > 0 ORDER BY id ASC`
+	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books WHERE available_copies > 0 ORDER BY id ASC`
 	rows, err := exec.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -73,7 +89,7 @@ func (r *bookRepository) ListAvailable(ctx context.Context, exec GormExecutor) (
 	var books []models.Book
 	for rows.Next() {
 		var b models.Book
-		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.AvailableCopies, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt); err != nil {
 			return nil, err
 		}
 		books = append(books, b)
@@ -82,7 +98,7 @@ func (r *bookRepository) ListAvailable(ctx context.Context, exec GormExecutor) (
 }
 
 func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor) ([]models.Book, error) {
-	query := `SELECT id, title, author, isbn, available_copies, created_at FROM books ORDER BY id ASC`
+	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books ORDER BY id ASC`
 	rows, err := exec.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -92,7 +108,7 @@ func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor) ([]mode
 	var books []models.Book
 	for rows.Next() {
 		var b models.Book
-		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.AvailableCopies, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt); err != nil {
 			return nil, err
 		}
 		books = append(books, b)
@@ -101,8 +117,8 @@ func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor) ([]mode
 }
 
 func (r *bookRepository) Update(ctx context.Context, exec GormExecutor, b *models.Book) error {
-	query := `UPDATE books SET title = $1, author = $2, isbn = $3, available_copies = $4 WHERE id = $5`
-	res, err := exec.ExecContext(ctx, query, b.Title, b.Author, b.Isbn, b.AvailableCopies, b.ID)
+	query := `UPDATE books SET title = $1, author = $2, isbn = $3, genre_id = $4 WHERE id = $5`
+	res, err := exec.ExecContext(ctx, query, b.Title, b.Author, b.Isbn, b.GenreID, b.ID)
 	if err != nil {
 		return err
 	}
@@ -113,7 +129,7 @@ func (r *bookRepository) Update(ctx context.Context, exec GormExecutor, b *model
 	return err
 }
 
-func (r *bookRepository) Delete(ctx context.Context, exec GormExecutor, id int64) error {
+func (r *bookRepository) Delete(ctx context.Context, exec GormExecutor, id int) error {
 	query := `DELETE FROM books WHERE id = $1`
 	res, err := exec.ExecContext(ctx, query, id)
 	if err != nil {
@@ -126,38 +142,64 @@ func (r *bookRepository) Delete(ctx context.Context, exec GormExecutor, id int64
 	return err
 }
 
-func (r *bookRepository) HasActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int64) (bool, error) {
+func (r *bookRepository) HasActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int) (bool, error) {
 	// Updated to use your table's return_date column name
-	query := `SELECT EXISTS(SELECT 1 FROM loans WHERE book_id = $1 AND member_id = $2 AND return_date IS NULL)`
+	query := `SELECT EXISTS(SELECT 1 FROM loans WHERE book_id = $1 AND member_id = $2 AND returned_at IS NULL)`
 	var exists bool
 	err := exec.QueryRowContext(ctx, query, bookID, memberID).Scan(&exists)
 	return exists, err
 }
 
-func (r *bookRepository) CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID int64) error {
-	// Updated to use your table's loan_date column name
-	query := `INSERT INTO loans (book_id, member_id, loan_date) VALUES ($1, $2, NOW())`
-	_, err := exec.ExecContext(ctx, query, bookID, memberID)
-	return err
+func (r *bookRepository) CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID, borrowedLibraryID int) error {
+	query := `
+        INSERT INTO loans (book_id, member_id, borrowed_library_id, borrowed_at) 
+        VALUES ($1, $2, $3, NOW())`
+
+	_, err := exec.ExecContext(ctx, query, bookID, memberID, borrowedLibraryID)
+	if err != nil {
+		return fmt.Errorf("failed to insert loan record: %w", err)
+	}
+
+	return nil
 }
 
-func (r *bookRepository) UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID int64) error {
-	// Updated to use your table's return_date column name
-	query := `UPDATE loans SET return_date = NOW() WHERE book_id = $1 AND member_id = $2 AND return_date IS NULL`
-	res, err := exec.ExecContext(ctx, query, bookID, memberID)
+func (r *bookRepository) UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID, returnedLibraryID int) error {
+	// Updates the return timestamp and records which library branch received the book
+	query := `
+        UPDATE loans 
+        SET returned_at = NOW(), returned_library_id = $1 
+        WHERE book_id = $2 AND member_id = $3 AND returned_at IS NULL`
+
+	res, err := exec.ExecContext(ctx, query, returnedLibraryID, bookID, memberID)
+	if err != nil {
+		return fmt.Errorf("failed to execute loan return update: %w", err)
+	}
+
+	rows, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
-	rows, err := res.RowsAffected()
-	if err == nil && rows == 0 {
+
+	if rows == 0 {
 		return errors.New("no matching active loan record found for this member and book combination")
 	}
-	return err
+
+	return nil
 }
 
 func (r *bookRepository) ListLoans(ctx context.Context, exec GormExecutor) ([]models.Loan, error) {
-	// Matching your precise database schema column mappings
-	query := `SELECT id, book_id, member_id, loan_date, return_date FROM loans ORDER BY id DESC`
+	query := `
+		SELECT 
+			id,
+			book_id,
+			member_id,
+			borrowed_at,
+			returned_at,
+			borrowed_library_id,
+			returned_library_id
+		FROM loans
+		ORDER BY id DESC
+	`
 	rows, err := exec.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -167,10 +209,134 @@ func (r *bookRepository) ListLoans(ctx context.Context, exec GormExecutor) ([]mo
 	var loans []models.Loan
 	for rows.Next() {
 		var l models.Loan
-		if err := rows.Scan(&l.ID, &l.BookID, &l.MemberID, &l.BorrowedAt, &l.ReturnedAt); err != nil {
+		err := rows.Scan(
+			&l.ID,
+			&l.BookID,
+			&l.MemberID,
+			&l.BorrowedAt,
+			&l.ReturnedAt, // *time.Time handles [null] nicely
+			&l.BorrowedLibraryID,
+			&l.ReturnedLibraryID, // *int handles [null] nicely!
+		)
+		fmt.Println(err)
+		if err != nil {
 			return nil, err
 		}
 		loans = append(loans, l)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return loans, nil
+}
+
+func (r *bookRepository) GetLoansByMemberID(ctx context.Context, exec GormExecutor, memberID int) ([]models.Loan, error) {
+	query := `
+		SELECT id, book_id, member_id, borrowed_library_id, returned_library_id, 
+		       borrowed_at, returned_at
+		FROM loans
+		WHERE member_id = $1
+		ORDER BY borrowed_at DESC
+	`
+
+	rows, err := exec.QueryContext(ctx, query, memberID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var loans []models.Loan
+
+	for rows.Next() {
+		var l models.Loan
+		fmt.Printf("%T\n", l.ReturnedLibraryID)
+		fmt.Printf("Type of ReturnedLibraryID: %T\n", l.ReturnedLibraryID)
+		err := rows.Scan(
+			&l.ID,
+			&l.BookID,
+			&l.MemberID,
+			&l.BorrowedLibraryID,
+			&l.ReturnedLibraryID,
+			&l.BorrowedAt,
+			&l.ReturnedAt, // database/sql handles null SQL timestamps directly into *time.Time
+		)
+		if err != nil {
+			log.Printf("SCAN ERROR: %v\n", err)
+			return nil, err
+		}
+		loans = append(loans, l)
+	}
+
+	return loans, nil
+}
+
+func (r *bookRepository) GetByGenreID(ctx context.Context, exec GormExecutor, genreID int) ([]models.Book, error) {
+	query := `
+		SELECT id, title, author, isbn, genre_id, created_at
+		FROM books
+		WHERE genre_id = $1
+		ORDER BY title ASC
+	`
+
+	rows, err := exec.QueryContext(ctx, query, genreID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var books []models.Book
+	for rows.Next() {
+		var b models.Book
+		err := rows.Scan(
+			&b.ID,
+			&b.Title,
+			&b.Author,
+			&b.Isbn,
+			&b.GenreID,
+			&b.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		books = append(books, b)
+	}
+
+	return books, nil
+}
+
+func (r *bookRepository) GetBooksByLibraryAndGenre(ctx context.Context, exec GormExecutor, libraryID, genreID int) ([]models.Book, error) {
+	query := `
+		SELECT b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at
+		FROM books b
+		INNER JOIN book_inventory bi ON b.id = bi.book_id
+		WHERE bi.library_id = $1 AND b.genre_id = $2 AND bi.available_copies > 0
+		ORDER BY b.title ASC
+	`
+
+	rows, err := exec.QueryContext(ctx, query, libraryID, genreID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var books []models.Book
+	for rows.Next() {
+		var b models.Book
+		err := rows.Scan(
+			&b.ID,
+			&b.Title,
+			&b.Author,
+			&b.Isbn,
+			&b.GenreID,
+			&b.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		books = append(books, b)
+	}
+
+	return books, nil
 }

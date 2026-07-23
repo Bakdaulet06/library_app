@@ -10,11 +10,11 @@ import (
 )
 
 type MemberHandler struct {
-	service services.MemberService
+	memberService services.MemberService
 }
 
 func NewMemberHandler(s services.MemberService) *MemberHandler {
-	return &MemberHandler{service: s}
+	return &MemberHandler{memberService: s}
 }
 
 func (h *MemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -34,17 +34,28 @@ func (h *MemberHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.ListMembers(w, r)
 			return
 		}
-		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+
+		// Handle sub-resource path: /members/{id}/loans
+		parts := strings.Split(path, "/")
+		if len(parts) == 2 && parts[1] == "loans" {
+			if id, err := strconv.Atoi(parts[0]); err == nil {
+				h.GetMemberLoans(w, r, id)
+				return
+			}
+		}
+
+		// Handle single-resource path: /members/{id}
+		if id, err := strconv.Atoi(path); err == nil {
 			h.GetMember(w, r, id)
 			return
 		}
 	case http.MethodPut:
-		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+		if id, err := strconv.Atoi(path); err == nil {
 			h.UpdateMember(w, r, id)
 			return
 		}
 	case http.MethodDelete:
-		if id, err := strconv.ParseInt(path, 10, 64); err == nil {
+		if id, err := strconv.Atoi(path); err == nil {
 			h.DeleteMember(w, r, id)
 			return
 		}
@@ -67,7 +78,7 @@ func (h *MemberHandler) RegisterMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	member, err := h.service.RegisterMember(r.Context(), req)
+	member, err := h.memberService.RegisterMember(r.Context(), req)
 	if err != nil {
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -78,8 +89,8 @@ func (h *MemberHandler) RegisterMember(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(member)
 }
 
-func (h *MemberHandler) GetMember(w http.ResponseWriter, r *http.Request, id int64) {
-	member, err := h.service.GetMemberByID(r.Context(), id)
+func (h *MemberHandler) GetMember(w http.ResponseWriter, r *http.Request, id int) {
+	member, err := h.memberService.GetMemberByID(r.Context(), id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -89,7 +100,7 @@ func (h *MemberHandler) GetMember(w http.ResponseWriter, r *http.Request, id int
 }
 
 func (h *MemberHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	members, err := h.service.ListMembers(r.Context())
+	members, err := h.memberService.ListMembers(r.Context())
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "internal runtime exception listing profiles"})
@@ -98,7 +109,7 @@ func (h *MemberHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(members)
 }
 
-func (h *MemberHandler) UpdateMember(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *MemberHandler) UpdateMember(w http.ResponseWriter, r *http.Request, id int) {
 	var req dto.CreateMemberRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -112,7 +123,7 @@ func (h *MemberHandler) UpdateMember(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
-	member, err := h.service.UpdateMember(r.Context(), id, req)
+	member, err := h.memberService.UpdateMember(r.Context(), id, req)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -121,11 +132,22 @@ func (h *MemberHandler) UpdateMember(w http.ResponseWriter, r *http.Request, id 
 	json.NewEncoder(w).Encode(member)
 }
 
-func (h *MemberHandler) DeleteMember(w http.ResponseWriter, r *http.Request, id int64) {
-	if err := h.service.DeleteMember(r.Context(), id); err != nil {
+func (h *MemberHandler) DeleteMember(w http.ResponseWriter, r *http.Request, id int) {
+	if err := h.memberService.DeleteMember(r.Context(), id); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *MemberHandler) GetMemberLoans(w http.ResponseWriter, r *http.Request, memberID int) {
+	loans, err := h.memberService.GetMemberLoans(r.Context(), memberID)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(loans)
 }

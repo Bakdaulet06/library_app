@@ -9,12 +9,12 @@ import (
 
 type MemberRepository interface {
 	Create(ctx context.Context, exec GormExecutor, m *models.BookMember) error
-	GetByID(ctx context.Context, exec GormExecutor, id int64) (*models.BookMember, error)
+	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.BookMember, error)
 	GetByEmail(ctx context.Context, exec GormExecutor, email string) (*models.BookMember, error)
 	List(ctx context.Context, exec GormExecutor) ([]models.BookMember, error)
 	Update(ctx context.Context, exec GormExecutor, m *models.BookMember) error
-	Delete(ctx context.Context, exec GormExecutor, id int64) error
-	HasOutstandingLoans(ctx context.Context, exec GormExecutor, id int64) (bool, error)
+	Delete(ctx context.Context, exec GormExecutor, id int) error
+	HasOutstandingLoans(ctx context.Context, exec GormExecutor, id int) (bool, error)
 }
 
 type memberRepository struct{}
@@ -28,7 +28,7 @@ func (r *memberRepository) Create(ctx context.Context, exec GormExecutor, m *mod
 	return exec.QueryRowContext(ctx, query, m.Name, m.Email).Scan(&m.ID, &m.JoinedAt)
 }
 
-func (r *memberRepository) GetByID(ctx context.Context, exec GormExecutor, id int64) (*models.BookMember, error) {
+func (r *memberRepository) GetByID(ctx context.Context, exec GormExecutor, id int) (*models.BookMember, error) {
 	query := `SELECT id, name, email, joined_at FROM members WHERE id = $1`
 	var m models.BookMember
 	err := exec.QueryRowContext(ctx, query, id).Scan(&m.ID, &m.Name, &m.Email, &m.JoinedAt)
@@ -80,7 +80,7 @@ func (r *memberRepository) Update(ctx context.Context, exec GormExecutor, m *mod
 	return err
 }
 
-func (r *memberRepository) Delete(ctx context.Context, exec GormExecutor, id int64) error {
+func (r *memberRepository) Delete(ctx context.Context, exec GormExecutor, id int) error {
 	query := `DELETE FROM members WHERE id = $1`
 	res, err := exec.ExecContext(ctx, query, id)
 	if err != nil {
@@ -93,7 +93,7 @@ func (r *memberRepository) Delete(ctx context.Context, exec GormExecutor, id int
 	return err
 }
 
-func (r *memberRepository) HasOutstandingLoans(ctx context.Context, exec GormExecutor, id int64) (bool, error) {
+func (r *memberRepository) HasOutstandingLoans(ctx context.Context, exec GormExecutor, id int) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM loans WHERE member_id = $1 AND returned_at IS NULL)`
 	var exists bool
 	err := exec.QueryRowContext(ctx, query, id).Scan(&exists)
