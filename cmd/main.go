@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"library/internal/handlers"
@@ -75,33 +74,62 @@ func main() {
 	bookshelfHandler := handlers.NewBookshelfHandler(bookshelfService)
 
 	// 5. Register routes on standard ServeMux
-	// 5. Register routes on standard ServeMux
 	mux := http.NewServeMux()
 
-	// REST CRUD routes
-	mux.Handle("/books", bookHandler)
-	mux.Handle("/books/", bookHandler)
+	// ----------------------------------------------------
+	// Libraries
+	// ----------------------------------------------------
+	mux.HandleFunc("GET /libraries", libraryHandler.ListLibraries)
+	mux.HandleFunc("POST /libraries", libraryHandler.RegisterLibrary)
+	mux.HandleFunc("GET /libraries/{id}", libraryHandler.GetLibraryByID)
+	mux.HandleFunc("PUT /libraries/{id}", libraryHandler.UpdateLibrary)
+	mux.HandleFunc("DELETE /libraries/{id}", libraryHandler.DeleteLibrary)
 
-	mux.Handle("/members", memberHandler)
-	mux.Handle("/members/", memberHandler)
+	// ----------------------------------------------------
+	// Library Books & Loans
+	// ----------------------------------------------------
+	mux.HandleFunc("GET /libraries/{id}/books", libraryHandler.GetLibraryBooks)
+	mux.HandleFunc("GET /libraries/{id}/loans", libraryHandler.GetLibraryLoans)
+	mux.HandleFunc("DELETE /libraries/{id}/books/{book_id}", libraryHandler.DeleteBookFromLibrary)
+	mux.HandleFunc("GET /libraries/{id}/books/genres/{genre_id}", libraryHandler.GetLibraryBooksByGenre)
+	mux.HandleFunc("POST /libraries/{id}/books/{book_id}/borrow", libraryHandler.BorrowBook)
 
-	mux.Handle("/inventory", bookInventoryHandler)
-	mux.Handle("/inventory/", bookInventoryHandler)
+	// ----------------------------------------------------
+	// Bookshelves
+	// ----------------------------------------------------
+	mux.HandleFunc("GET /libraries/{id}/bookshelves", bookshelfHandler.GetBookshelvesByLibraryID)
+	mux.HandleFunc("POST /libraries/{id}/bookshelves", bookshelfHandler.CreateBookshelf)
+	mux.HandleFunc("GET /libraries/{id}/bookshelves/{shelf_id}", bookshelfHandler.GetBookshelfByID)
+	mux.HandleFunc("DELETE /libraries/{id}/bookshelves/{shelf_id}", bookshelfHandler.DeleteBookshelf)
+	mux.HandleFunc("GET /libraries/{id}/bookshelves/{shelf_id}/books", bookshelfHandler.GetBooksByShelfID)
 
-	mux.Handle("/libraries/{library_id}/bookshelves", bookshelfHandler)
-	mux.Handle("/libraries/{library_id}/bookshelves/", bookshelfHandler)
+	// ====================================================
+	// BOOKS ROUTES
+	// ====================================================
+	mux.HandleFunc("GET /books", bookHandler.ListBooks)
+	mux.HandleFunc("POST /books", bookHandler.CreateBook)
+	mux.HandleFunc("GET /books/genres/{id}", bookHandler.GetBooksByGenreID)
+	mux.HandleFunc("GET /books/{id}", bookHandler.GetBook)
+	mux.HandleFunc("PUT /books/{id}", bookHandler.UpdateBook)
+	mux.HandleFunc("DELETE /books/{id}", bookHandler.DeleteBook)
 
-	mux.Handle("/libraries", libraryHandler)
-	mux.HandleFunc("/libraries/", func(w http.ResponseWriter, r *http.Request) {
-		// Check if the URL contains "/bookshelves"
-		if strings.Contains(r.URL.Path, "/bookshelves") {
-			bookshelfHandler.ServeHTTP(w, r)
-			return
-		}
+	// ====================================================
+	// INVENTORY ROUTES
+	// ====================================================
+	mux.HandleFunc("GET /inventory", bookInventoryHandler.ListInventory)
+	mux.HandleFunc("POST /inventory", bookInventoryHandler.AddInventory)
+	mux.HandleFunc("GET /inventory/{libraryId}/{bookId}", bookInventoryHandler.GetAvailableCopies)
+	mux.HandleFunc("DELETE /inventory/{libraryId}/{bookId}", bookInventoryHandler.DeleteInventory)
 
-		// Otherwise pass to libraryHandler
-		libraryHandler.ServeHTTP(w, r)
-	})
+	// ====================================================
+	// MEMBERS ROUTES
+	// ====================================================
+	mux.HandleFunc("GET /members", memberHandler.ListMembers)
+	mux.HandleFunc("POST /members", memberHandler.RegisterMember)
+	mux.HandleFunc("GET /members/{id}/loans", memberHandler.GetMemberLoans)
+	mux.HandleFunc("GET /members/{id}", memberHandler.GetMember)
+	mux.HandleFunc("PUT /members/{id}", memberHandler.UpdateMember)
+	mux.HandleFunc("DELETE /members/{id}", memberHandler.DeleteMember)
 
 	mux.HandleFunc("/return", bookHandler.HandleReturn)
 	mux.HandleFunc("/loans", bookHandler.HandleListLoans)

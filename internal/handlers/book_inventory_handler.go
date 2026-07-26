@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"library/internal/dto"
 	"library/internal/services"
@@ -20,47 +19,6 @@ func NewBookInventoryHandler(inventoryService services.BookInventoryService, boo
 		inventoryService: inventoryService,
 		bookshelfService: bookshelfService,
 	}
-}
-
-// ServeHTTP handles /inventory and /inventory/{libraryId}/{bookId}
-func (h *BookInventoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/inventory")
-	path = strings.Trim(path, "/")
-
-	if path == "" {
-		switch r.Method {
-		case http.MethodGet:
-			h.ListInventory(w, r)
-		case http.MethodPost:
-			h.AddInventory(w, r)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-		return
-	}
-
-	// Parsing composite key route: /inventory/{libraryId}/{bookId}
-	parts := strings.Split(path, "/")
-	if len(parts) == 2 {
-		libraryID, err1 := strconv.Atoi(parts[0])
-		bookID, err2 := strconv.Atoi(parts[1])
-		if err1 != nil || err2 != nil {
-			http.Error(w, "Invalid library or book ID format", http.StatusBadRequest)
-			return
-		}
-
-		switch r.Method {
-		case http.MethodGet:
-			h.GetAvailableCopies(w, r, libraryID, bookID)
-		case http.MethodDelete:
-			h.DeleteInventory(w, r, libraryID, bookID)
-		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-		return
-	}
-
-	http.Error(w, "Route not found", http.StatusNotFound)
 }
 
 func (h *BookInventoryHandler) AddInventory(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +50,20 @@ func (h *BookInventoryHandler) ListInventory(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(inventory)
 }
 
-func (h *BookInventoryHandler) GetAvailableCopies(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {
+func (h *BookInventoryHandler) GetAvailableCopies(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	bookIdStr := r.PathValue("book_id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	bookID, err := strconv.Atoi(bookIdStr)
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
 	copies, err := h.inventoryService.GetAvailableCopies(r.Context(), bookID, libraryID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -107,7 +78,20 @@ func (h *BookInventoryHandler) GetAvailableCopies(w http.ResponseWriter, r *http
 	})
 }
 
-func (h *BookInventoryHandler) DeleteInventory(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {
+func (h *BookInventoryHandler) DeleteInventory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	bookIdStr := r.PathValue("book_id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	bookID, err := strconv.Atoi(bookIdStr)
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
 	if err := h.inventoryService.DeleteBookInventory(r.Context(), libraryID, bookID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

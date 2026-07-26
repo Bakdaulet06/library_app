@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"library/internal/dto"
 	"library/internal/services"
@@ -19,122 +18,8 @@ func NewLibraryHandler(libraryService services.LibraryService, inventoryService 
 	return &LibraryHandler{libraryService: libraryService, inventoryService: inventoryService}
 }
 
-// ServeHTTP handles /libraries and /libraries/{id} or /libraries/{id}/books, /libraries/{id}/loans
-func (h *LibraryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	path := strings.TrimPrefix(r.URL.Path, "/libraries")
-	path = strings.Trim(path, "/")
-
-	if path == "" {
-		switch r.Method {
-		case http.MethodGet:
-			h.ListLibraries(w, r)
-		case http.MethodPost:
-			h.RegisterLibrary(w, r)
-		default:
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		}
-		return
-	}
-
-	parts := strings.Split(path, "/")
-	libraryID, err := strconv.Atoi(parts[0])
-	if err != nil {
-		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
-		return
-	}
-
-	switch len(parts) {
-	// Handle 1-part path: /libraries/{id}
-	case 1:
-		switch r.Method {
-		case http.MethodGet:
-			h.GetLibraryByID(w, r, libraryID)
-		case http.MethodPut:
-			h.UpdateLibrary(w, r, libraryID)
-		case http.MethodDelete:
-			h.DeleteLibrary(w, r, libraryID)
-		default:
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		}
-		return
-
-	//Handle 2-part paths: /libraries/{id}/books or /libraries/{id}/loans
-	case 2:
-		switch parts[1] {
-		case "books":
-			if r.Method == http.MethodGet {
-				h.GetLibraryBooks(w, r, libraryID)
-				return
-			}
-		case "loans":
-			if r.Method == http.MethodGet {
-				h.GetLibraryLoans(w, r, libraryID)
-				return
-			}
-		}
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-
-	//Handle 3-part path: /libraries/{libraryId}/books/{bookId}
-	case 3:
-		if parts[1] == "books" {
-			bookID, err := strconv.Atoi(parts[2])
-			if err != nil {
-				http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
-				return
-			}
-
-			if r.Method == http.MethodDelete {
-				h.DeleteBookFromLibrary(w, r, libraryID, bookID)
-				return
-			}
-
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-			return
-		}
-	//Handle 4-part path: /libraries/{libraryId}/books/genres/{genreId}
-	//Handle 4-part path: /libraries/{libraryId}/books/{book_id}/borrow
-	case 4:
-		if parts[1] == "books" && parts[2] == "genres" {
-			genreID, err := strconv.Atoi(parts[3])
-			if err != nil {
-				http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
-				return
-			}
-
-			if r.Method == http.MethodGet {
-				h.GetLibraryBooksByGenre(w, r, libraryID, genreID)
-				return
-			}
-
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-			return
-		}
-		if parts[1] == "books" {
-			bookID, err := strconv.Atoi(parts[2])
-			if err != nil || bookID <= 0 {
-				http.Error(w, `{"error":"invalid book id parameter"}`, http.StatusBadRequest)
-				return
-			}
-			if parts[3] != "borrow" {
-				http.Error(w, `{"error":"endpoint route or method pattern not found"}`, http.StatusNotFound)
-				return
-			}
-			if r.Method == http.MethodPost {
-				h.BorrowBook(w, r, libraryID, bookID)
-				return
-			}
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-			return
-		}
-	}
-
-	http.Error(w, `{"error":"endpoint route or method pattern not found"}`, http.StatusNotFound)
-}
-
 func (h *LibraryHandler) RegisterLibrary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	var req dto.CreateLibraryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
@@ -153,6 +38,7 @@ func (h *LibraryHandler) RegisterLibrary(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *LibraryHandler) ListLibraries(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	libraries, err := h.libraryService.ListLibraries(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -163,8 +49,15 @@ func (h *LibraryHandler) ListLibraries(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(libraries)
 }
 
-func (h *LibraryHandler) GetLibraryByID(w http.ResponseWriter, r *http.Request, id int) {
-	library, err := h.libraryService.GetLibraryByID(r.Context(), id)
+func (h *LibraryHandler) GetLibraryByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	library, err := h.libraryService.GetLibraryByID(r.Context(), libraryID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -174,14 +67,22 @@ func (h *LibraryHandler) GetLibraryByID(w http.ResponseWriter, r *http.Request, 
 	json.NewEncoder(w).Encode(library)
 }
 
-func (h *LibraryHandler) UpdateLibrary(w http.ResponseWriter, r *http.Request, id int) {
+func (h *LibraryHandler) UpdateLibrary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+
 	var req dto.CreateLibraryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	updated, err := h.libraryService.UpdateLibrary(r.Context(), id, req)
+	updated, err := h.libraryService.UpdateLibrary(r.Context(), libraryID, req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -191,8 +92,15 @@ func (h *LibraryHandler) UpdateLibrary(w http.ResponseWriter, r *http.Request, i
 	json.NewEncoder(w).Encode(updated)
 }
 
-func (h *LibraryHandler) DeleteLibrary(w http.ResponseWriter, r *http.Request, id int) {
-	if err := h.libraryService.DeleteLibrary(r.Context(), id); err != nil {
+func (h *LibraryHandler) DeleteLibrary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.libraryService.DeleteLibrary(r.Context(), libraryID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -200,7 +108,20 @@ func (h *LibraryHandler) DeleteLibrary(w http.ResponseWriter, r *http.Request, i
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *LibraryHandler) DeleteBookFromLibrary(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {
+func (h *LibraryHandler) DeleteBookFromLibrary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	bookIdStr := r.PathValue("book_id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	bookID, err := strconv.Atoi(bookIdStr)
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
 	// Calls your inventory service to delete the stock entry from book_inventory
 	if err := h.inventoryService.DeleteBookInventory(r.Context(), libraryID, bookID); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -210,8 +131,16 @@ func (h *LibraryHandler) DeleteBookFromLibrary(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *LibraryHandler) GetLibraryBooks(w http.ResponseWriter, r *http.Request, id int) {
-	books, err := h.libraryService.GetLibraryBooks(r.Context(), id)
+func (h *LibraryHandler) GetLibraryBooks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	books, err := h.libraryService.GetLibraryBooks(r.Context(), libraryID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -221,8 +150,15 @@ func (h *LibraryHandler) GetLibraryBooks(w http.ResponseWriter, r *http.Request,
 	json.NewEncoder(w).Encode(books)
 }
 
-func (h *LibraryHandler) GetLibraryLoans(w http.ResponseWriter, r *http.Request, id int) {
-	loans, err := h.libraryService.GetLibraryLoans(r.Context(), id)
+func (h *LibraryHandler) GetLibraryLoans(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	loans, err := h.libraryService.GetLibraryLoans(r.Context(), libraryID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -232,7 +168,20 @@ func (h *LibraryHandler) GetLibraryLoans(w http.ResponseWriter, r *http.Request,
 	json.NewEncoder(w).Encode(loans)
 }
 
-func (h *LibraryHandler) GetLibraryBooksByGenre(w http.ResponseWriter, r *http.Request, libraryID, genreID int) {
+func (h *LibraryHandler) GetLibraryBooksByGenre(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	genreIdStr := r.PathValue("genre_id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	genreID, err := strconv.Atoi(genreIdStr)
+	if err != nil || genreID <= 0 {
+		http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
+		return
+	}
 	books, err := h.libraryService.GetLibraryBooksByGenre(r.Context(), libraryID, genreID)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -244,7 +193,20 @@ func (h *LibraryHandler) GetLibraryBooksByGenre(w http.ResponseWriter, r *http.R
 }
 
 // Transactional Action endpoints
-func (h *LibraryHandler) BorrowBook(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {
+func (h *LibraryHandler) BorrowBook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := r.PathValue("id")
+	bookIdStr := r.PathValue("book_id")
+	libraryID, err := strconv.Atoi(idStr)
+	if err != nil || libraryID <= 0 {
+		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
+		return
+	}
+	bookID, err := strconv.Atoi(bookIdStr)
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
 	var req dto.BorrowBookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)

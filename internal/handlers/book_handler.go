@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 type BookHandler struct {
@@ -16,61 +15,6 @@ type BookHandler struct {
 
 func NewBookHandler(s services.BookService) *BookHandler {
 	return &BookHandler{service: s}
-}
-
-// ServeHTTP handles all routed routing variations for /books and /books/ paths
-func (h *BookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	path := strings.TrimPrefix(r.URL.Path, "/books")
-	path = strings.Trim(path, "/")
-
-	parts := strings.Split(path, "/")
-	switch r.Method {
-	case http.MethodGet:
-		// 1. Root: /books
-		if path == "" {
-			h.ListBooks(w, r)
-			return
-		}
-
-		// 2. Sub-resource: /books/genres/{id}
-		if len(parts) == 2 && parts[0] == "genres" {
-			genreID, err := strconv.Atoi(parts[1])
-			if err != nil {
-				http.Error(w, `{"error":"invalid genre ID format"}`, http.StatusBadRequest)
-				return
-			}
-			h.GetBooksByGenreID(w, r, genreID)
-			return
-		}
-
-		// 3. Single resource: /books/{id}
-		if id, err := strconv.Atoi(path); err == nil {
-			h.GetBook(w, r, id)
-			return
-		}
-
-	case http.MethodPost:
-		if path == "" {
-			h.CreateBook(w, r)
-			return
-		}
-
-	case http.MethodPut:
-		if id, err := strconv.Atoi(path); err == nil {
-			h.UpdateBook(w, r, id)
-			return
-		}
-
-	case http.MethodDelete:
-		if id, err := strconv.Atoi(path); err == nil {
-			h.DeleteBook(w, r, id)
-			return
-		}
-	}
-
-	http.Error(w, `{"error":"endpoint route or method pattern not found"}`, http.StatusNotFound)
 }
 
 func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
@@ -98,8 +42,14 @@ func (h *BookHandler) CreateBook(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(book)
 }
 
-func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request, id int) {
-	book, err := h.service.GetBookByID(r.Context(), id)
+func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	bookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
+	book, err := h.service.GetBookByID(r.Context(), bookID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -129,7 +79,14 @@ func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(books)
 }
 
-func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int) {
+func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	bookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
+
 	var req dto.CreateBookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -143,7 +100,7 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int)
 		return
 	}
 
-	book, err := h.service.UpdateBook(r.Context(), id, req)
+	book, err := h.service.UpdateBook(r.Context(), bookID, req)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -152,8 +109,14 @@ func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request, id int)
 	json.NewEncoder(w).Encode(book)
 }
 
-func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request, id int) {
-	if err := h.service.DeleteBook(r.Context(), id); err != nil {
+func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	bookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || bookID <= 0 {
+		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.DeleteBook(r.Context(), bookID); err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -211,7 +174,13 @@ func (h *BookHandler) HandleListLoans(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(loans)
 }
 
-func (h *BookHandler) GetBooksByGenreID(w http.ResponseWriter, r *http.Request, genreID int) {
+func (h *BookHandler) GetBooksByGenreID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	genreID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || genreID <= 0 {
+		http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
+		return
+	}
 	books, err := h.service.GetBooksByGenreID(r.Context(), genreID)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
