@@ -20,16 +20,35 @@ type LibraryService interface {
 	ListLibraries(ctx context.Context) ([]models.Library, error)
 	UpdateLibrary(ctx context.Context, id int, req dto.CreateLibraryRequest) (*models.Library, error)
 	DeleteLibrary(ctx context.Context, id int) error
+
+	BorrowBook(ctx context.Context, req dto.BorrowBookRequest, libraryID, bookID int) error
 }
 
 type libraryService struct {
-	db          *sql.DB
-	libraryRepo repositories.LibraryRepository
-	bookRepo    repositories.BookRepository
+	db                *sql.DB
+	libraryRepo       repositories.LibraryRepository
+	bookRepo          repositories.BookRepository
+	memberRepo        repositories.MemberRepository
+	bookInventoryRepo repositories.BookInventoryRepository
+	bookshelfRepo     repositories.BookshelfRepository
 }
 
-func NewLibraryService(db *sql.DB, libraryRepo repositories.LibraryRepository) LibraryService {
-	return &libraryService{db: db, libraryRepo: libraryRepo}
+func NewLibraryService(
+	db *sql.DB,
+	libraryRepo repositories.LibraryRepository,
+	bookRepo repositories.BookRepository,
+	memberRepo repositories.MemberRepository,
+	bookInventoryRepo repositories.BookInventoryRepository,
+	bookshelfRepo repositories.BookshelfRepository,
+) LibraryService {
+	return &libraryService{
+		db:                db,
+		libraryRepo:       libraryRepo,
+		bookRepo:          bookRepo,
+		memberRepo:        memberRepo,
+		bookInventoryRepo: bookInventoryRepo,
+		bookshelfRepo:     bookshelfRepo,
+	}
 }
 
 // 1. RegisterLibrary
@@ -176,4 +195,61 @@ func (s *libraryService) GetLibraryBooksByGenre(ctx context.Context, libraryID, 
 	}
 
 	return books, nil
+}
+
+// --- 1. BorrowBook ---
+func (s *libraryService) BorrowBook(ctx context.Context, req dto.BorrowBookRequest, libraryID, bookID int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Verify Member Exists
+	member, err := s.memberRepo.GetByID(ctx, tx, req.MemberID)
+	if err != nil {
+		return fmt.Errorf("database error checking member: %w", err)
+	}
+	if member == nil {
+		return errors.New("checkout blocked: targeted member record does not exist")
+	}
+
+	// 2. Verify Book Exists in shelves of library
+	shelfAllocations, err := s.bookInventoryRepo.GetShelfAllocationsByBook(ctx, tx, libraryID, bookID)
+	if err != nil {
+		return fmt.Errorf("failed to check book shelf locations: %w", err)
+	}
+	if len(shelfAllocations) == 0 {
+		return errors.New("There's no such book in the library")
+	}
+
+	// 3. Verify Active Loan
+	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, bookID, req.MemberID)
+	if err != nil {
+		return fmt.Errorf("database error checking active loans: %w", err)
+	}
+	if hasLoan {
+		return errors.New("this member has already borrowed this book and has not returned it yet")
+	}
+
+	bookLocation := models.BookLocation{
+		BookID:      bookID,
+		LibraryID:   libraryID,
+		BookshelfID: shelfAllocations[0].BookshelfID,
+	}
+	// 5. Decrement Stock in `book_inventory`
+	if err := s.bookInventoryRepo.DecrementInventory(ctx, tx, bookLocation); err != nil {
+		return fmt.Errorf("failed to decrement inventory: %w", err)
+	}
+
+	if err := s.bookshelfRepo.UpdateEmptySpace(ctx, tx, libraryID, bookLocation.BookshelfID, -1); err != nil {
+		return fmt.Errorf("failed to update empty space: %w", err)
+	}
+
+	// 6. Register Loan Record
+	if err := s.bookRepo.CreateLoan(ctx, tx, bookID, req.MemberID, libraryID); err != nil {
+		return fmt.Errorf("failed to register loan log: %w", err)
+	}
+
+	return tx.Commit()
 }

@@ -12,10 +12,14 @@ import (
 
 type BookInventoryHandler struct {
 	inventoryService services.BookInventoryService
+	bookshelfService services.BookshelfService
 }
 
-func NewBookInventoryHandler(inventoryService services.BookInventoryService) *BookInventoryHandler {
-	return &BookInventoryHandler{inventoryService: inventoryService}
+func NewBookInventoryHandler(inventoryService services.BookInventoryService, bookshelfService services.BookshelfService) *BookInventoryHandler {
+	return &BookInventoryHandler{
+		inventoryService: inventoryService,
+		bookshelfService: bookshelfService,
+	}
 }
 
 // ServeHTTP handles /inventory and /inventory/{libraryId}/{bookId}
@@ -28,7 +32,7 @@ func (h *BookInventoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		case http.MethodGet:
 			h.ListInventory(w, r)
 		case http.MethodPost:
-			h.CreateInventory(w, r)
+			h.AddInventory(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -48,8 +52,6 @@ func (h *BookInventoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		switch r.Method {
 		case http.MethodGet:
 			h.GetAvailableCopies(w, r, libraryID, bookID)
-		case http.MethodPut:
-			h.UpdateInventory(w, r, libraryID, bookID)
 		case http.MethodDelete:
 			h.DeleteInventory(w, r, libraryID, bookID)
 		default:
@@ -61,14 +63,14 @@ func (h *BookInventoryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	http.Error(w, "Route not found", http.StatusNotFound)
 }
 
-func (h *BookInventoryHandler) CreateInventory(w http.ResponseWriter, r *http.Request) {
+func (h *BookInventoryHandler) AddInventory(w http.ResponseWriter, r *http.Request) {
 	var req dto.CreateBookInventoryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	inventory, err := h.inventoryService.CreateOrUpdateBookInventory(r.Context(), req)
+	inventory, err := h.inventoryService.AddBookInventory(r.Context(), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -103,23 +105,6 @@ func (h *BookInventoryHandler) GetAvailableCopies(w http.ResponseWriter, r *http
 		"book_id":          bookID,
 		"available_copies": *copies,
 	})
-}
-
-func (h *BookInventoryHandler) UpdateInventory(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {
-	var req dto.CreateBookInventoryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request payload", http.StatusBadRequest)
-		return
-	}
-
-	updated, err := h.inventoryService.CreateOrUpdateBookInventory(r.Context(), req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(updated)
 }
 
 func (h *BookInventoryHandler) DeleteInventory(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {

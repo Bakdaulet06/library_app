@@ -19,7 +19,6 @@ type BookService interface {
 	UpdateBook(ctx context.Context, id int, req dto.CreateBookRequest) (*models.Book, error)
 	DeleteBook(ctx context.Context, id int) error
 
-	BorrowBook(ctx context.Context, req dto.BorrowBookRequest) error
 	ReturnBook(ctx context.Context, req dto.ReturnBookRequest) error
 	ListAllLoans(ctx context.Context) ([]models.Loan, error)
 }
@@ -110,65 +109,6 @@ func (s *bookService) DeleteBook(ctx context.Context, id int) error {
 	return s.bookRepo.Delete(ctx, s.db, id)
 }
 
-// --- 1. BorrowBook ---
-func (s *bookService) BorrowBook(ctx context.Context, req dto.BorrowBookRequest) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// 1. Verify Member Exists
-	member, err := s.memberRepo.GetByID(ctx, tx, req.MemberID)
-	if err != nil {
-		return fmt.Errorf("database error checking member: %w", err)
-	}
-	if member == nil {
-		return errors.New("checkout blocked: targeted member record does not exist")
-	}
-
-	// 2. Verify Book Exists in Catalog
-	book, err := s.bookRepo.GetByID(ctx, tx, req.BookID)
-	if err != nil {
-		return fmt.Errorf("database error checking book catalog: %w", err)
-	}
-	if book == nil {
-		return errors.New("checkout blocked: targeted book record does not exist")
-	}
-
-	// 3. Verify Stock at Selected Library Branch
-	availableCopies, err := s.bookInventoryRepo.GetAvailableCopies(ctx, tx, req.BookID, req.Borrowed_library_id)
-	if err != nil {
-		return fmt.Errorf("database error checking available copies: %w", err)
-	}
-	if availableCopies == nil {
-		return errors.New("checkout blocked: this book is not stocked at the selected library branch")
-	}
-	if *availableCopies <= 0 {
-		return errors.New("checkout blocked: zero inventory balance remains for this book at this branch")
-	}
-	// 4. Verify Active Loan
-	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, req.BookID, req.MemberID)
-	if err != nil {
-		return fmt.Errorf("database error checking active loans: %w", err)
-	}
-	if hasLoan {
-		return errors.New("this member has already borrowed this book and has not returned it yet")
-	}
-
-	// 5. Decrement Stock in `book_inventory`
-	if err := s.bookInventoryRepo.DecrementInventory(ctx, tx, req.BookID, req.Borrowed_library_id); err != nil {
-		return fmt.Errorf("failed to decrement inventory: %w", err)
-	}
-
-	// 6. Register Loan Record
-	if err := s.bookRepo.CreateLoan(ctx, tx, req.BookID, req.MemberID, req.Borrowed_library_id); err != nil {
-		return fmt.Errorf("failed to register loan log: %w", err)
-	}
-
-	return tx.Commit()
-}
-
 // --- 2. ReturnBook ---
 func (s *bookService) ReturnBook(ctx context.Context, req dto.ReturnBookRequest) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -196,13 +136,13 @@ func (s *bookService) ReturnBook(ctx context.Context, req dto.ReturnBookRequest)
 	}
 
 	// 3. Mark Loan as Returned
-	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, req.BookID, req.MemberID, req.Returned_library_id); err != nil {
+	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, req.BookID, req.MemberID, req.ReturnedLibraryID); err != nil {
 		return fmt.Errorf("failed to update loan record: %w", err)
 	}
 
 	// 4. Increment Stock in `book_inventory` for the Receiving Library Branch
 	// Uses `CreateOrUpdate` / `IncrementInventory` so returning to a new branch works seamlessly
-	if err := s.bookInventoryRepo.IncrementInventory(ctx, tx, req.BookID, req.Returned_library_id); err != nil {
+	if err := s.bookInventoryRepo.IncrementInventory(ctx, tx, req.BookID, req.ReturnedLibraryID); err != nil {
 		return fmt.Errorf("failed to increment inventory: %w", err)
 	}
 

@@ -1,7 +1,6 @@
 package models
 
 type BookInventory struct {
-	LibraryID       int `json:"library_id"`
-	BookID          int `json:"book_id"`
+	BookLocation
 	AvailableCopies int `json:"available_copies"`
 }

@@ -26,7 +26,6 @@ func (h *BookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path = strings.Trim(path, "/")
 
 	parts := strings.Split(path, "/")
-
 	switch r.Method {
 	case http.MethodGet:
 		// 1. Root: /books
@@ -160,37 +159,6 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request, id int)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// Transactional Action endpoints
-
-func (h *BookHandler) HandleBorrow(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed, use POST"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req dto.BorrowBookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
-		return
-	}
-
-	if err := req.Validate(); err != nil {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	if err := h.service.BorrowBook(r.Context(), req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{"message": "book processing successfully leased and logged"})
 }
 
 func (h *BookHandler) HandleReturn(w http.ResponseWriter, r *http.Request) {

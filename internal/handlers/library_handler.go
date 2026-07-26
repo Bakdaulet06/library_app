@@ -15,8 +15,8 @@ type LibraryHandler struct {
 	inventoryService services.BookInventoryService
 }
 
-func NewLibraryHandler(libraryService services.LibraryService) *LibraryHandler {
-	return &LibraryHandler{libraryService: libraryService}
+func NewLibraryHandler(libraryService services.LibraryService, inventoryService services.BookInventoryService) *LibraryHandler {
+	return &LibraryHandler{libraryService: libraryService, inventoryService: inventoryService}
 }
 
 // ServeHTTP handles /libraries and /libraries/{id} or /libraries/{id}/books, /libraries/{id}/loans
@@ -45,42 +45,23 @@ func (h *LibraryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Handle 4-part path: /libraries/{libraryId}/books/genres/{genreId}
-	if len(parts) == 4 && parts[1] == "books" && parts[2] == "genres" {
-		genreID, err := strconv.Atoi(parts[3])
-		if err != nil {
-			http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
-			return
+	switch len(parts) {
+	// Handle 1-part path: /libraries/{id}
+	case 1:
+		switch r.Method {
+		case http.MethodGet:
+			h.GetLibraryByID(w, r, libraryID)
+		case http.MethodPut:
+			h.UpdateLibrary(w, r, libraryID)
+		case http.MethodDelete:
+			h.DeleteLibrary(w, r, libraryID)
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		}
-
-		if r.Method == http.MethodGet {
-			h.GetLibraryBooksByGenre(w, r, libraryID, genreID)
-			return
-		}
-
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
-	}
 
-	// 2. Handle 3-part path: /libraries/{libraryId}/books/{bookId}
-	if len(parts) == 3 && parts[1] == "books" {
-		bookID, err := strconv.Atoi(parts[2])
-		if err != nil {
-			http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
-			return
-		}
-
-		if r.Method == http.MethodDelete {
-			h.DeleteBookFromLibrary(w, r, libraryID, bookID)
-			return
-		}
-
-		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	// 3. Handle 2-part paths: /libraries/{id}/books or /libraries/{id}/loans
-	if len(parts) == 2 {
+	//Handle 2-part paths: /libraries/{id}/books or /libraries/{id}/loans
+	case 2:
 		switch parts[1] {
 		case "books":
 			if r.Method == http.MethodGet {
@@ -95,21 +76,59 @@ func (h *LibraryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
-	}
 
-	// 4. Handle 1-part path: /libraries/{id}
-	if len(parts) == 1 {
-		switch r.Method {
-		case http.MethodGet:
-			h.GetLibraryByID(w, r, libraryID)
-		case http.MethodPut:
-			h.UpdateLibrary(w, r, libraryID)
-		case http.MethodDelete:
-			h.DeleteLibrary(w, r, libraryID)
-		default:
+	//Handle 3-part path: /libraries/{libraryId}/books/{bookId}
+	case 3:
+		if parts[1] == "books" {
+			bookID, err := strconv.Atoi(parts[2])
+			if err != nil {
+				http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
+				return
+			}
+
+			if r.Method == http.MethodDelete {
+				h.DeleteBookFromLibrary(w, r, libraryID, bookID)
+				return
+			}
+
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
 		}
-		return
+	//Handle 4-part path: /libraries/{libraryId}/books/genres/{genreId}
+	//Handle 4-part path: /libraries/{libraryId}/books/{book_id}/borrow
+	case 4:
+		if parts[1] == "books" && parts[2] == "genres" {
+			genreID, err := strconv.Atoi(parts[3])
+			if err != nil {
+				http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
+				return
+			}
+
+			if r.Method == http.MethodGet {
+				h.GetLibraryBooksByGenre(w, r, libraryID, genreID)
+				return
+			}
+
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		if parts[1] == "books" {
+			bookID, err := strconv.Atoi(parts[2])
+			if err != nil || bookID <= 0 {
+				http.Error(w, `{"error":"invalid book id parameter"}`, http.StatusBadRequest)
+				return
+			}
+			if parts[3] != "borrow" {
+				http.Error(w, `{"error":"endpoint route or method pattern not found"}`, http.StatusNotFound)
+				return
+			}
+			if r.Method == http.MethodPost {
+				h.BorrowBook(w, r, libraryID, bookID)
+				return
+			}
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
 	}
 
 	http.Error(w, `{"error":"endpoint route or method pattern not found"}`, http.StatusNotFound)
@@ -222,4 +241,28 @@ func (h *LibraryHandler) GetLibraryBooksByGenre(w http.ResponseWriter, r *http.R
 	}
 
 	json.NewEncoder(w).Encode(books)
+}
+
+// Transactional Action endpoints
+func (h *LibraryHandler) BorrowBook(w http.ResponseWriter, r *http.Request, libraryID, bookID int) {
+	var req dto.BorrowBookRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
+		return
+	}
+
+	if err := req.Validate(); err != nil {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := h.libraryService.BorrowBook(r.Context(), req, libraryID, bookID); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"message": "book processing successfully leased and logged"})
 }

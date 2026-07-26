@@ -2,7 +2,6 @@ package repositories
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"library/internal/models"
@@ -10,12 +9,14 @@ import (
 
 type BookInventoryRepository interface {
 	GetAvailableCopies(ctx context.Context, exec GormExecutor, book_id, library_Id int) (*int, error)
-	CreateOrUpdate(ctx context.Context, exec GormExecutor, b *models.BookInventory) error
+	AddCopies(ctx context.Context, exec GormExecutor, inv *models.BookInventory) (*models.BookInventory, error)
 	List(ctx context.Context, exec GormExecutor) ([]models.BookInventory, error)
 	Delete(ctx context.Context, exec GormExecutor, libraryId, bookId int) error
 
-	DecrementInventory(ctx context.Context, exec GormExecutor, bookID, libraryID int) error
+	DecrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error
 	IncrementInventory(ctx context.Context, exec GormExecutor, bookID, libraryID int) error
+
+	GetShelfAllocationsByBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) ([]ShelfAllocation, error)
 }
 
 type bookInventoryRepository struct{}
@@ -24,39 +25,52 @@ func NewBookInventoryRepository() BookInventoryRepository {
 	return &bookInventoryRepository{}
 }
 
+type ShelfAllocation struct {
+	BookshelfID int
+	Quantity    int
+}
+
 func (r *bookInventoryRepository) GetAvailableCopies(ctx context.Context, exec GormExecutor, bookId, libraryId int) (*int, error) {
-	// 1. Fixed parameter placeholder from &2 -> $2
-	query := `SELECT available_copies FROM book_inventory WHERE book_id = $1 AND library_id = $2`
+	query := `
+		SELECT COALESCE(SUM(available_copies), 0) 
+		FROM book_inventory 
+		WHERE book_id = $1 AND library_id = $2
+	`
 
-	var copies int
-	err := exec.QueryRowContext(ctx, query, bookId, libraryId).Scan(&copies)
-
-	// 2. Return nil, nil if the book isn't stocked at this library at all
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+	var totalCopies int
+	err := exec.QueryRowContext(ctx, query, bookId, libraryId).Scan(&totalCopies)
+	if err != nil {
+		return nil, err
 	}
+
+	return &totalCopies, nil
+}
+
+func (r *bookInventoryRepository) AddCopies(ctx context.Context, exec GormExecutor, inv *models.BookInventory) (*models.BookInventory, error) {
+
+	query := `
+        INSERT INTO book_inventory (library_id, book_id, bookshelf_id, available_copies)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (library_id, book_id, bookshelf_id) 
+		DO UPDATE SET 
+			available_copies = book_inventory.available_copies + EXCLUDED.available_copies
+		RETURNING library_id, book_id, bookshelf_id, available_copies;
+    `
+
+	var result models.BookInventory
+	err := exec.QueryRowContext(
+		ctx, query,
+		inv.LibraryID, inv.BookID, inv.BookshelfID, inv.AvailableCopies,
+	).Scan(
+		&result.LibraryID, &result.BookID,
+		&result.BookshelfID, &result.AvailableCopies,
+	)
 
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Cleanly return pointer to copies count
-	return &copies, nil
-}
-
-func (r *bookInventoryRepository) CreateOrUpdate(ctx context.Context, exec GormExecutor, b *models.BookInventory) error {
-	query := `
-		INSERT INTO book_inventory (library_id, book_id, available_copies)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (library_id, book_id) 
-		DO UPDATE SET available_copies = EXCLUDED.available_copies`
-
-	_, err := exec.ExecContext(ctx, query, b.LibraryID, b.BookID, b.AvailableCopies)
-	if err != nil {
-		return fmt.Errorf("failed to create or update book inventory: %w", err)
-	}
-
-	return nil
+	return &result, nil
 }
 
 // --- 2. List ---
@@ -113,13 +127,13 @@ func (r *bookInventoryRepository) Delete(ctx context.Context, exec GormExecutor,
 }
 
 // Decrements stock count safely (prevents going below 0)
-func (r *bookInventoryRepository) DecrementInventory(ctx context.Context, exec GormExecutor, bookID, libraryID int) error {
+func (r *bookInventoryRepository) DecrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error {
 	query := `
 		UPDATE book_inventory 
 		SET available_copies = available_copies - 1 
-		WHERE book_id = $1 AND library_id = $2 AND available_copies > 0`
+		WHERE book_id = $1 AND library_id = $2 AND bookshelf_id = $3 AND available_copies > 0`
 
-	res, err := exec.ExecContext(ctx, query, bookID, libraryID)
+	res, err := exec.ExecContext(ctx, query, bookLocation.BookID, bookLocation.LibraryID, bookLocation.BookshelfID)
 	if err != nil {
 		return err
 	}
@@ -145,4 +159,28 @@ func (r *bookInventoryRepository) IncrementInventory(ctx context.Context, exec G
 
 	_, err := exec.ExecContext(ctx, query, libraryID, bookID)
 	return err
+}
+
+func (r *bookInventoryRepository) GetShelfAllocationsByBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) ([]ShelfAllocation, error) {
+	query := `
+		SELECT bookshelf_id, available_copies 
+		FROM book_inventory 
+		WHERE library_id = $1 AND book_id = $2
+	`
+	rows, err := exec.QueryContext(ctx, query, libraryID, bookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var allocations []ShelfAllocation
+	for rows.Next() {
+		var alloc ShelfAllocation
+		if err := rows.Scan(&alloc.BookshelfID, &alloc.Quantity); err != nil {
+			return nil, err
+		}
+		allocations = append(allocations, alloc)
+	}
+
+	return allocations, rows.Err()
 }

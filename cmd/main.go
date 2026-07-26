@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"library/internal/handlers"
@@ -57,18 +58,21 @@ func main() {
 	memberRepo := repositories.NewMemberRepository()
 	bookInventoryRepo := repositories.NewBookInventoryRepository()
 	libraryRepo := repositories.NewLibraryRepository()
+	bookshelfRepo := repositories.NewBookshelfRepository()
 
 	// 3. Inject repositories to bootstrap business workflows
 	bookService := services.NewBookService(db, bookRepo, memberRepo, bookInventoryRepo)
 	memberService := services.NewMemberService(db, memberRepo, bookRepo)
-	bookInventoryService := services.NewBookInventoryService(db, bookInventoryRepo, bookRepo, libraryRepo)
-	libraryService := services.NewLibraryService(db, libraryRepo)
+	bookInventoryService := services.NewBookInventoryService(db, bookInventoryRepo, bookRepo, libraryRepo, bookshelfRepo)
+	libraryService := services.NewLibraryService(db, libraryRepo, bookRepo, memberRepo, bookInventoryRepo, bookshelfRepo)
+	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo)
 
 	// 4. Bind services into HTTP server payload multiplexer routers
 	bookHandler := handlers.NewBookHandler(bookService)
 	memberHandler := handlers.NewMemberHandler(memberService)
-	bookInventoryHandler := handlers.NewBookInventoryHandler(bookInventoryService)
-	libraryHandler := handlers.NewLibraryHandler(libraryService)
+	bookInventoryHandler := handlers.NewBookInventoryHandler(bookInventoryService, bookshelfService)
+	libraryHandler := handlers.NewLibraryHandler(libraryService, bookInventoryService)
+	bookshelfHandler := handlers.NewBookshelfHandler(bookshelfService)
 
 	// 5. Register routes on standard ServeMux
 	// 5. Register routes on standard ServeMux
@@ -84,11 +88,21 @@ func main() {
 	mux.Handle("/inventory", bookInventoryHandler)
 	mux.Handle("/inventory/", bookInventoryHandler)
 
-	mux.Handle("/libraries", libraryHandler)
-	mux.Handle("/libraries/", libraryHandler)
+	mux.Handle("/libraries/{library_id}/bookshelves", bookshelfHandler)
+	mux.Handle("/libraries/{library_id}/bookshelves/", bookshelfHandler)
 
-	// Custom atomic loan operations
-	mux.HandleFunc("/borrow", bookHandler.HandleBorrow)
+	mux.Handle("/libraries", libraryHandler)
+	mux.HandleFunc("/libraries/", func(w http.ResponseWriter, r *http.Request) {
+		// Check if the URL contains "/bookshelves"
+		if strings.Contains(r.URL.Path, "/bookshelves") {
+			bookshelfHandler.ServeHTTP(w, r)
+			return
+		}
+
+		// Otherwise pass to libraryHandler
+		libraryHandler.ServeHTTP(w, r)
+	})
+
 	mux.HandleFunc("/return", bookHandler.HandleReturn)
 	mux.HandleFunc("/loans", bookHandler.HandleListLoans)
 

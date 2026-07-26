@@ -1,0 +1,1 @@
+ALTER TABLE book_inventories DROP CONSTRAINT IF EXISTS unique_library_book_shelf;
