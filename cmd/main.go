@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"library/internal/handlers"
+	"library/internal/middleware"
 	"library/internal/repositories"
 	"library/internal/services"
 
@@ -58,6 +59,7 @@ func main() {
 	bookInventoryRepo := repositories.NewBookInventoryRepository()
 	libraryRepo := repositories.NewLibraryRepository()
 	bookshelfRepo := repositories.NewBookshelfRepository()
+	userRepo := repositories.NewUserRepository()
 
 	// 3. Inject repositories to bootstrap business workflows
 	bookService := services.NewBookService(db, bookRepo, memberRepo, bookInventoryRepo)
@@ -65,6 +67,7 @@ func main() {
 	bookInventoryService := services.NewBookInventoryService(db, bookInventoryRepo, bookRepo, libraryRepo, bookshelfRepo)
 	libraryService := services.NewLibraryService(db, libraryRepo, bookRepo, memberRepo, bookInventoryRepo, bookshelfRepo)
 	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo)
+	userService := services.NewUserService(db, userRepo)
 
 	// 4. Bind services into HTTP server payload multiplexer routers
 	bookHandler := handlers.NewBookHandler(bookService)
@@ -72,64 +75,77 @@ func main() {
 	bookInventoryHandler := handlers.NewBookInventoryHandler(bookInventoryService, bookshelfService)
 	libraryHandler := handlers.NewLibraryHandler(libraryService, bookInventoryService)
 	bookshelfHandler := handlers.NewBookshelfHandler(bookshelfService)
+	userHandler := handlers.NewUserHandler(userService)
+
+	//middleware
+	authMiddleware := middleware.Authenticate(userService)
 
 	// 5. Register routes on standard ServeMux
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("POST /register", userHandler.Register)
+	mux.HandleFunc("POST /login", userHandler.Login)
+
 	// ----------------------------------------------------
 	// Libraries
 	// ----------------------------------------------------
-	mux.HandleFunc("GET /libraries", libraryHandler.ListLibraries)
-	mux.HandleFunc("POST /libraries", libraryHandler.RegisterLibrary)
-	mux.HandleFunc("GET /libraries/{id}", libraryHandler.GetLibraryByID)
-	mux.HandleFunc("PUT /libraries/{id}", libraryHandler.UpdateLibrary)
-	mux.HandleFunc("DELETE /libraries/{id}", libraryHandler.DeleteLibrary)
+	mux.Handle("GET /libraries", protected(authMiddleware, libraryHandler.ListLibraries))
+	mux.Handle("POST /libraries", protected(authMiddleware, libraryHandler.RegisterLibrary, "admin"))
+	mux.Handle("GET /libraries/{id}", protected(authMiddleware, libraryHandler.GetLibraryByID))
+	mux.Handle("PUT /libraries/{id}", protected(authMiddleware, libraryHandler.UpdateLibrary, "admin"))
+	mux.Handle("DELETE /libraries/{id}", protected(authMiddleware, libraryHandler.DeleteLibrary, "admin"))
 
 	// ----------------------------------------------------
 	// Library Books & Loans
 	// ----------------------------------------------------
-	mux.HandleFunc("GET /libraries/{id}/books", libraryHandler.GetLibraryBooks)
-	mux.HandleFunc("GET /libraries/{id}/loans", libraryHandler.GetLibraryLoans)
-	mux.HandleFunc("DELETE /libraries/{id}/books/{book_id}", libraryHandler.DeleteBookFromLibrary)
-	mux.HandleFunc("GET /libraries/{id}/books/genres/{genre_id}", libraryHandler.GetLibraryBooksByGenre)
-	mux.HandleFunc("POST /libraries/{id}/books/{book_id}/borrow", libraryHandler.BorrowBook)
+	mux.Handle("GET /libraries/{id}/books", protected(authMiddleware, libraryHandler.GetLibraryBooks))
+	mux.Handle("GET /libraries/{id}/loans", protected(authMiddleware, libraryHandler.GetLibraryLoans, "admin", "employee"))
+	mux.Handle("DELETE /libraries/{id}/books/{book_id}", protected(authMiddleware, libraryHandler.DeleteBookFromLibrary, "admin"))
+	mux.Handle("GET /libraries/{id}/books/genres/{genre_id}", protected(authMiddleware, libraryHandler.GetLibraryBooksByGenre))
+	mux.Handle("POST /libraries/{id}/books/{book_id}/borrow", protected(authMiddleware, libraryHandler.BorrowBook, "user"))
 
 	// ----------------------------------------------------
 	// Bookshelves
 	// ----------------------------------------------------
-	mux.HandleFunc("GET /libraries/{id}/bookshelves", bookshelfHandler.GetBookshelvesByLibraryID)
-	mux.HandleFunc("POST /libraries/{id}/bookshelves", bookshelfHandler.CreateBookshelf)
-	mux.HandleFunc("GET /libraries/{id}/bookshelves/{shelf_id}", bookshelfHandler.GetBookshelfByID)
-	mux.HandleFunc("DELETE /libraries/{id}/bookshelves/{shelf_id}", bookshelfHandler.DeleteBookshelf)
-	mux.HandleFunc("GET /libraries/{id}/bookshelves/{shelf_id}/books", bookshelfHandler.GetBooksByShelfID)
+	mux.Handle("GET /libraries/{id}/bookshelves", protected(authMiddleware, bookshelfHandler.GetBookshelvesByLibraryID))
+	mux.Handle("POST /libraries/{id}/bookshelves", protected(authMiddleware, bookshelfHandler.CreateBookshelf, "admin"))
+	mux.Handle("GET /libraries/{id}/bookshelves/{shelf_id}", protected(authMiddleware, bookshelfHandler.GetBookshelfByID))
+	mux.Handle("DELETE /libraries/{id}/bookshelves/{shelf_id}", protected(authMiddleware, bookshelfHandler.DeleteBookshelf, "admin"))
+	mux.Handle("GET /libraries/{id}/bookshelves/{shelf_id}/books", protected(authMiddleware, bookshelfHandler.GetBooksByShelfID))
 
 	// ====================================================
-	// BOOKS ROUTES
+	// BOOKS ROUTES (All require Auth, Admin restricted where needed)
 	// ====================================================
-	mux.HandleFunc("GET /books", bookHandler.ListBooks)
-	mux.HandleFunc("POST /books", bookHandler.CreateBook)
-	mux.HandleFunc("GET /books/genres/{id}", bookHandler.GetBooksByGenreID)
-	mux.HandleFunc("GET /books/{id}", bookHandler.GetBook)
-	mux.HandleFunc("PUT /books/{id}", bookHandler.UpdateBook)
-	mux.HandleFunc("DELETE /books/{id}", bookHandler.DeleteBook)
+
+	// 1. Authenticated User Routes (Any logged-in user can view/list)
+	mux.Handle("GET /books", protected(authMiddleware, bookHandler.ListBooks))
+	mux.Handle("GET /books/genres/{id}", protected(authMiddleware, bookHandler.GetBooksByGenreID))
+	mux.Handle("GET /books/{id}", protected(authMiddleware, bookHandler.GetBook))
+
+	//admin
+	mux.Handle("POST /books", protected(authMiddleware, bookHandler.CreateBook, "admin"))
+	mux.Handle("PUT /books/{id}", protected(authMiddleware, bookHandler.UpdateBook, "admin"))
+	mux.Handle("DELETE /books/{id}", protected(authMiddleware, bookHandler.DeleteBook, "admin"))
 
 	// ====================================================
-	// INVENTORY ROUTES
+	// INVENTORY ROUTES (Admin-Only)
 	// ====================================================
-	mux.HandleFunc("GET /inventory", bookInventoryHandler.ListInventory)
-	mux.HandleFunc("POST /inventory", bookInventoryHandler.AddInventory)
-	mux.HandleFunc("GET /inventory/{libraryId}/{bookId}", bookInventoryHandler.GetAvailableCopies)
-	mux.HandleFunc("DELETE /inventory/{libraryId}/{bookId}", bookInventoryHandler.DeleteInventory)
+
+	mux.Handle("GET /inventory", protected(authMiddleware, bookInventoryHandler.ListInventory, "admin"))
+	mux.Handle("POST /inventory", protected(authMiddleware, bookInventoryHandler.AddInventory, "admin"))
+	mux.Handle("GET /inventory/{libraryId}/{bookId}", protected(authMiddleware, bookInventoryHandler.GetAvailableCopies, "admin"))
+	mux.Handle("DELETE /inventory/{libraryId}/{bookId}", protected(authMiddleware, bookInventoryHandler.DeleteInventory, "admin"))
 
 	// ====================================================
-	// MEMBERS ROUTES
+	// MEMBER ROUTES (Admin-Only)
 	// ====================================================
-	mux.HandleFunc("GET /members", memberHandler.ListMembers)
-	mux.HandleFunc("POST /members", memberHandler.RegisterMember)
-	mux.HandleFunc("GET /members/{id}/loans", memberHandler.GetMemberLoans)
-	mux.HandleFunc("GET /members/{id}", memberHandler.GetMember)
-	mux.HandleFunc("PUT /members/{id}", memberHandler.UpdateMember)
-	mux.HandleFunc("DELETE /members/{id}", memberHandler.DeleteMember)
+
+	mux.Handle("GET /members", protected(authMiddleware, memberHandler.ListMembers, "admin"))
+	mux.Handle("POST /members", protected(authMiddleware, memberHandler.RegisterMember, "admin"))
+	mux.Handle("GET /members/{id}", protected(authMiddleware, memberHandler.GetMember, "admin"))
+	mux.Handle("GET /members/{id}/loans", protected(authMiddleware, memberHandler.GetMemberLoans, "admin"))
+	mux.Handle("PUT /members/{id}", protected(authMiddleware, memberHandler.UpdateMember, "admin"))
+	mux.Handle("DELETE /members/{id}", protected(authMiddleware, memberHandler.DeleteMember, "admin"))
 
 	mux.HandleFunc("/return", bookHandler.HandleReturn)
 	mux.HandleFunc("/loans", bookHandler.HandleListLoans)
@@ -176,4 +192,12 @@ func runMigrations(db *sql.DB) {
 	}
 
 	log.Println("Database migrations applied successfully!")
+}
+
+// Helper to apply middleware to multiple routes cleanly
+func protected(authMiddleware func(http.Handler) http.Handler, handler http.HandlerFunc, roles ...string) http.Handler {
+	if len(roles) > 0 {
+		return middleware.Chain(handler, authMiddleware, middleware.RequireRoles(roles...))
+	}
+	return middleware.Chain(handler, authMiddleware)
 }

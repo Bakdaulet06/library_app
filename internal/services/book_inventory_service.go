@@ -152,7 +152,7 @@ func (s *bookInventoryService) DeleteBookInventory(ctx context.Context, libraryI
 	// 3. Free up empty space on each bookshelf that stored this book
 	for _, alloc := range shelfAllocations {
 		// Passing positive quantity frees up empty_space on the bookshelf
-		err := s.bookshelfRepo.UpdateEmptySpace(ctx, tx, libraryID, alloc.BookshelfID, alloc.Quantity)
+		err := s.bookshelfRepo.UpdateEmptySpace(ctx, tx, libraryID, alloc.BookshelfID, -alloc.Quantity)
 		if err != nil {
 			return fmt.Errorf("failed to free bookshelf space for shelf %d: %w", alloc.BookshelfID, err)
 		}

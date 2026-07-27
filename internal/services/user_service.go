@@ -17,6 +17,7 @@ import (
 type UserService interface {
 	Register(ctx context.Context, req dto.RegisterRequest) (*models.User, error)
 	Login(ctx context.Context, req dto.LoginRequest) (*dto.AuthResponse, error)
+	GetUserByID(ctx context.Context, userID int) (*models.User, error)
 }
 
 type userService struct {
@@ -24,8 +25,8 @@ type userService struct {
 	userRepo repositories.UserRepository
 }
 
-func NewUserService(userRepo repositories.UserRepository) UserService {
-	return &userService{userRepo: userRepo}
+func NewUserService(db *sql.DB, userRepo repositories.UserRepository) UserService {
+	return &userService{db: db, userRepo: userRepo}
 }
 
 func (s *userService) Register(ctx context.Context, req dto.RegisterRequest) (*models.User, error) {
@@ -78,4 +79,21 @@ func (s *userService) Login(ctx context.Context, req dto.LoginRequest) (*dto.Aut
 		Token: token,
 		User:  *user,
 	}, nil
+}
+
+func (s *userService) GetUserByID(ctx context.Context, userID int) (*models.User, error) {
+	if userID <= 0 {
+		return nil, errors.New("invalid user ID")
+	}
+
+	// 1. Fetch user from repository
+	user, err := s.userRepo.GetByID(ctx, s.db, userID)
+	if err != nil {
+		if errors.Is(err, repositories.ErrUserNotFound) {
+			return nil, errors.New("user not found")
+		}
+		return nil, fmt.Errorf("failed to fetch user: %w", err)
+	}
+
+	return user, nil
 }

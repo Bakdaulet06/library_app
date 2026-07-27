@@ -191,7 +191,7 @@ func (r *bookshelfRepository) UpdateEmptySpace(ctx context.Context, exec GormExe
 		return err
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("failed to update shelf space: operation exceeds shelf bounds or shelf not found %d", spaceDelta)
+		return fmt.Errorf("failed to update shelf space: operation exceeds shelf bounds or shelf not found %d, %d", spaceDelta, rowsAffected)
 	}
 
 	return nil
