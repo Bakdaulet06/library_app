@@ -33,6 +33,11 @@ type BookRepository interface {
 	UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID, returned_library_id int) error
 	ListLoans(ctx context.Context, exec GormExecutor) ([]models.Loan, error)
 	GetLoansByMemberID(ctx context.Context, exec GormExecutor, memberID int) ([]models.Loan, error)
+
+	CreateReturnedBook(ctx context.Context, exec GormExecutor, bookID, libraryID, memberID int) error
+	GetReturnedBooksByLibrary(ctx context.Context, exec GormExecutor, libraryID int) ([]models.ReturnedBook, error)
+	GetReturnedBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) (*models.ReturnedBook, error)
+	DeleteReturnedBook(ctx context.Context, exec GormExecutor, id int) error
 }
 
 type bookRepository struct{}
@@ -339,4 +344,71 @@ func (r *bookRepository) GetBooksByLibraryAndGenre(ctx context.Context, exec Gor
 	}
 
 	return books, nil
+}
+
+func (r *bookRepository) CreateReturnedBook(ctx context.Context, exec GormExecutor, bookID, libraryID, memberID int) error {
+	query := `
+		INSERT INTO returned_books (book_id, library_id, member_id)
+		VALUES ($1, $2, $3);
+	`
+	_, err := exec.ExecContext(ctx, query, bookID, libraryID, memberID)
+	if err != nil {
+		return fmt.Errorf("failed to create returned book record: %w", err)
+	}
+	return nil
+}
+
+func (r *bookRepository) GetReturnedBooksByLibrary(ctx context.Context, exec GormExecutor, libraryID int) ([]models.ReturnedBook, error) {
+	query := `
+		SELECT id, book_id, library_id, member_id, returned_at
+		FROM returned_books
+		WHERE library_id = $1
+		ORDER BY returned_at;
+	`
+	rows, err := exec.QueryContext(ctx, query, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch returned books: %w", err)
+	}
+	defer rows.Close()
+
+	var result []models.ReturnedBook
+	for rows.Next() {
+		var rb models.ReturnedBook
+		if err := rows.Scan(&rb.ID, &rb.BookID, &rb.LibraryID, &rb.MemberID, &rb.ReturnedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan returned book row: %w", err)
+		}
+		result = append(result, rb)
+	}
+	return result, rows.Err()
+}
+
+// GetReturnedBook fetches a single pending returned-book record scoped to a library+book,
+// used to validate the assign_shelf request and to get the member_id for cleanup.
+func (r *bookRepository) GetReturnedBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) (*models.ReturnedBook, error) {
+	query := `
+		SELECT id, book_id, library_id, member_id, returned_at
+		FROM returned_books
+		WHERE library_id = $1 AND book_id = $2
+		ORDER BY returned_at
+		LIMIT 1;
+	`
+	var rb models.ReturnedBook
+	err := exec.QueryRowContext(ctx, query, libraryID, bookID).
+		Scan(&rb.ID, &rb.BookID, &rb.LibraryID, &rb.MemberID, &rb.ReturnedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch returned book: %w", err)
+	}
+	return &rb, nil
+}
+
+func (r *bookRepository) DeleteReturnedBook(ctx context.Context, exec GormExecutor, id int) error {
+	query := `DELETE FROM returned_books WHERE id = $1;`
+	_, err := exec.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete returned book record: %w", err)
+	}
+	return nil
 }

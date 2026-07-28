@@ -10,14 +10,15 @@ import (
 )
 
 var (
-	ErrUserNotFound   = errors.New("user not found")
-	ErrDuplicateEmail = errors.New("email address is already registered")
+	ErrUserNotFound              = errors.New("user not found")
+	ErrDuplicateEmail            = errors.New("email address is already registered")
+	ErrLibraryAlreadyHasEmployee = errors.New("this library already has an assigned employee")
 )
 
 type UserRepository interface {
-	Create(ctx context.Context, exec GormExecutor, user *models.User) error
-	GetByEmail(ctx context.Context, exec GormExecutor, email string) (*models.User, error)
-	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.User, error)
+	Create(ctx context.Context, exec GormExecutor, user *models.BookMember) error
+	GetByEmail(ctx context.Context, exec GormExecutor, email string) (*models.BookMember, error)
+	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.BookMember, error)
 }
 
 type userRepository struct{}
@@ -27,14 +28,14 @@ func NewUserRepository() UserRepository {
 }
 
 // Create inserts a new user record into PostgreSQL and returns the generated ID & CreatedAt timestamp
-func (r *userRepository) Create(ctx context.Context, exec GormExecutor, user *models.User) error {
+func (r *userRepository) Create(ctx context.Context, exec GormExecutor, user *models.BookMember) error {
 	query := `
-		INSERT INTO users (email, password, role)
+		INSERT INTO members (email, password, role)
 		VALUES ($1, $2, $3)
-		RETURNING id, created_at;
+		RETURNING id, joined_at;
 	`
 
-	err := exec.QueryRowContext(ctx, query, user.Email, user.Password, user.Role).Scan(&user.ID, &user.CreatedAt)
+	err := exec.QueryRowContext(ctx, query, user.Email, user.Password, user.Role).Scan(&user.ID, &user.JoinedAt)
 	if err != nil {
 		// Handle Postgres unique constraint violation (SQLSTATE 23505) for duplicate emails
 		if isDuplicateKeyError(err) {
@@ -47,20 +48,20 @@ func (r *userRepository) Create(ctx context.Context, exec GormExecutor, user *mo
 }
 
 // GetByEmail retrieves a user by their email address (used during login)
-func (r *userRepository) GetByEmail(ctx context.Context, exec GormExecutor, email string) (*models.User, error) {
+func (r *userRepository) GetByEmail(ctx context.Context, exec GormExecutor, email string) (*models.BookMember, error) {
 	query := `
-		SELECT id, email, password, role, created_at
-		FROM users
+		SELECT id, email, password, role, joined_at
+		FROM members
 		WHERE email = $1;
 	`
 
-	var user models.User
+	var user models.BookMember
 	err := exec.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Password,
 		&user.Role,
-		&user.CreatedAt,
+		&user.JoinedAt,
 	)
 
 	if err != nil {
@@ -74,20 +75,20 @@ func (r *userRepository) GetByEmail(ctx context.Context, exec GormExecutor, emai
 }
 
 // GetByID retrieves a user by their primary key ID
-func (r *userRepository) GetByID(ctx context.Context, exec GormExecutor, id int) (*models.User, error) {
+func (r *userRepository) GetByID(ctx context.Context, exec GormExecutor, id int) (*models.BookMember, error) {
 	query := `
-		SELECT id, email, password, role, created_at
-		FROM users
+		SELECT id, email, password, role, joined_at
+		FROM members
 		WHERE id = $1;
 	`
 
-	var user models.User
+	var user models.BookMember
 	err := exec.QueryRowContext(ctx, query, id).Scan(
 		&user.ID,
 		&user.Email,
 		&user.Password,
 		&user.Role,
-		&user.CreatedAt,
+		&user.JoinedAt,
 	)
 
 	if err != nil {

@@ -124,35 +124,6 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *BookHandler) HandleReturn(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"method not allowed, use POST"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req dto.ReturnBookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
-		return
-	}
-
-	if err := req.Validate(); err != nil {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	if err := h.service.ReturnBook(r.Context(), req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{"message": "asset safely returned and inventory incremented"})
-}
-
 // Append this function to the bottom of internal/handlers/book_handler.go
 func (h *BookHandler) HandleListLoans(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

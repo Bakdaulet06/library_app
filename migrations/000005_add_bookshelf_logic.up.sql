@@ -1,5 +1,5 @@
 -- 1. Create Bookshelves table without the section column
-CREATE TABLE bookshelves (
+CREATE TABLE IF NOT EXISTS bookshelves (
     id SERIAL PRIMARY KEY,
     library_id INT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
     code VARCHAR(50) NOT NULL,            -- e.g., "A-101", "SHELF-01"

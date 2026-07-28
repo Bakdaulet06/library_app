@@ -85,8 +85,8 @@ func RequireRoles(allowedRoles ...string) func(http.Handler) http.Handler {
 }
 
 // Helper function for handlers to easily get the authenticated user
-func GetUserFromContext(ctx context.Context) (*models.User, bool) {
-	user, ok := ctx.Value(UserContextKey).(*models.User)
+func GetUserFromContext(ctx context.Context) (*models.BookMember, bool) {
+	user, ok := ctx.Value(UserContextKey).(*models.BookMember)
 	return user, ok
 }
 

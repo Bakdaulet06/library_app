@@ -41,9 +41,33 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(user)
 }
 
+func (h *UserHandler) RegisterClient(w http.ResponseWriter, r *http.Request) {
+	var req dto.RegisterClientAndLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, `{"error": "email and password are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.userService.RegisterClient(r.Context(), req)
+	if err != nil {
+		// Handle duplicate email or validation errors
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(user)
+}
+
 // POST /api/login
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req dto.LoginRequest
+	var req dto.RegisterClientAndLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return
@@ -64,13 +88,3 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(authRes)
 }
-
-// func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
-// 	userID, ok := r.Context().Value(middleware.UserIDKey).(int)
-// 	if !ok {
-// 		http.Error(w, `{"error": "user ID not found in context"}`, http.StatusInternalServerError)
-// 		return
-// 	}
-
-// 	// Fetch profile for userID...
-// }

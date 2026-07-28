@@ -14,7 +14,7 @@ type BookInventoryRepository interface {
 	Delete(ctx context.Context, exec GormExecutor, libraryId, bookId int) error
 
 	DecrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error
-	IncrementInventory(ctx context.Context, exec GormExecutor, bookID, libraryID int) error
+	IncrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error
 
 	GetShelfAllocationsByBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) ([]ShelfAllocation, error)
 }
@@ -150,14 +150,14 @@ func (r *bookInventoryRepository) DecrementInventory(ctx context.Context, exec G
 }
 
 // Increments stock count safely using UPSERT (creates stock record if returning to a branch for the first time)
-func (r *bookInventoryRepository) IncrementInventory(ctx context.Context, exec GormExecutor, bookID, libraryID int) error {
+func (r *bookInventoryRepository) IncrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error {
 	query := `
-		INSERT INTO book_inventory (library_id, book_id, available_copies)
-		VALUES ($1, $2, 1)
-		ON CONFLICT (library_id, book_id) 
+		INSERT INTO book_inventory (library_id, book_id, bookshelf_id, available_copies)
+		VALUES ($1, $2, $3, 1)
+		ON CONFLICT (library_id, book_id, bookshelf_id) 
 		DO UPDATE SET available_copies = book_inventory.available_copies + 1`
 
-	_, err := exec.ExecContext(ctx, query, libraryID, bookID)
+	_, err := exec.ExecContext(ctx, query, bookLocation.LibraryID, bookLocation.BookID, bookLocation.BookshelfID)
 	return err
 }
 

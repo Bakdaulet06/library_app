@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS returned_books (
+    id SERIAL PRIMARY KEY,
+    book_id INT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    library_id INT NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    member_id INT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    returned_at TIMESTAMP NOT NULL DEFAULT now()
+);

@@ -15,13 +15,16 @@ type LibraryService interface {
 	RegisterLibrary(ctx context.Context, req dto.CreateLibraryRequest) (*models.Library, error)
 	GetLibraryByID(ctx context.Context, id int) (*models.Library, error)
 	GetLibraryLoans(ctx context.Context, id int) ([]models.Loan, error)
-	GetLibraryBooks(ctx context.Context, id int) ([]models.Book, error)
+	GetLibraryBooks(ctx context.Context, id int) ([]models.LibraryBook, error)
 	GetLibraryBooksByGenre(ctx context.Context, libraryID, genreID int) ([]models.Book, error)
 	ListLibraries(ctx context.Context) ([]models.Library, error)
 	UpdateLibrary(ctx context.Context, id int, req dto.CreateLibraryRequest) (*models.Library, error)
 	DeleteLibrary(ctx context.Context, id int) error
 
-	BorrowBook(ctx context.Context, req dto.BorrowBookRequest, libraryID, bookID int) error
+	BorrowBook(ctx context.Context, memberID, libraryID, bookID int) error
+	ReturnBook(ctx context.Context, libraryID, memberID, bookID int) error
+	AssignShelf(ctx context.Context, libraryID, bookID int) (*models.Bookshelf, error)
+	ListReturnedBooks(ctx context.Context, libraryID int) ([]models.ReturnedBook, error)
 }
 
 type libraryService struct {
@@ -159,7 +162,7 @@ func (s *libraryService) GetLibraryLoans(ctx context.Context, id int) ([]models.
 }
 
 // 7. GetLibraryBooks
-func (s *libraryService) GetLibraryBooks(ctx context.Context, id int) ([]models.Book, error) {
+func (s *libraryService) GetLibraryBooks(ctx context.Context, id int) ([]models.LibraryBook, error) {
 	// 1. Verify library branch exists
 	library, err := s.libraryRepo.GetByID(ctx, s.db, id)
 	if err != nil {
@@ -176,7 +179,7 @@ func (s *libraryService) GetLibraryBooks(ctx context.Context, id int) ([]models.
 	}
 
 	if books == nil {
-		return []models.Book{}, nil
+		return []models.LibraryBook{}, nil
 	}
 
 	return books, nil
@@ -198,7 +201,7 @@ func (s *libraryService) GetLibraryBooksByGenre(ctx context.Context, libraryID, 
 }
 
 // --- 1. BorrowBook ---
-func (s *libraryService) BorrowBook(ctx context.Context, req dto.BorrowBookRequest, libraryID, bookID int) error {
+func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bookID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -206,7 +209,7 @@ func (s *libraryService) BorrowBook(ctx context.Context, req dto.BorrowBookReque
 	defer tx.Rollback()
 
 	// 1. Verify Member Exists
-	member, err := s.memberRepo.GetByID(ctx, tx, req.MemberID)
+	member, err := s.memberRepo.GetByID(ctx, tx, memberID)
 	if err != nil {
 		return fmt.Errorf("database error checking member: %w", err)
 	}
@@ -224,7 +227,7 @@ func (s *libraryService) BorrowBook(ctx context.Context, req dto.BorrowBookReque
 	}
 
 	// 3. Verify Active Loan
-	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, bookID, req.MemberID)
+	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, bookID, memberID)
 	if err != nil {
 		return fmt.Errorf("database error checking active loans: %w", err)
 	}
@@ -247,9 +250,99 @@ func (s *libraryService) BorrowBook(ctx context.Context, req dto.BorrowBookReque
 	}
 
 	// 6. Register Loan Record
-	if err := s.bookRepo.CreateLoan(ctx, tx, bookID, req.MemberID, libraryID); err != nil {
+	if err := s.bookRepo.CreateLoan(ctx, tx, bookID, memberID, libraryID); err != nil {
 		return fmt.Errorf("failed to register loan log: %w", err)
 	}
 
 	return tx.Commit()
+}
+
+// --- 2. ReturnBook ---
+func (s *libraryService) ReturnBook(ctx context.Context, libraryID, memberID, bookID int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	book, err := s.bookRepo.GetByID(ctx, tx, bookID)
+	if err != nil {
+		return fmt.Errorf("database error checking book catalog: %w", err)
+	}
+	if book == nil {
+		return errors.New("return blocked: target catalog book no longer exists")
+	}
+
+	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, bookID, memberID)
+	if err != nil {
+		return fmt.Errorf("database error checking active loan: %w", err)
+	}
+	if !hasLoan {
+		return errors.New("return blocked: no active loan found for this member and book")
+	}
+
+	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, bookID, memberID, libraryID); err != nil {
+		return fmt.Errorf("failed to update loan record: %w", err)
+	}
+
+	// Queue for employee shelf assignment instead of incrementing inventory directly.
+	if err := s.bookRepo.CreateReturnedBook(ctx, tx, bookID, libraryID, memberID); err != nil {
+		return fmt.Errorf("failed to queue returned book: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// ListReturnedBooks — for GET /libraries/:id/returned_books, employee-only.
+func (s *libraryService) ListReturnedBooks(ctx context.Context, libraryID int) ([]models.ReturnedBook, error) {
+	return s.bookRepo.GetReturnedBooksByLibrary(ctx, s.db, libraryID)
+}
+
+// AssignShelf — for POST /libraries/:id/returned_books/:book_id/assign_shelf, employee-only.
+func (s *libraryService) AssignShelf(ctx context.Context, libraryID, bookID int) (*models.Bookshelf, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	returned, err := s.bookRepo.GetReturnedBook(ctx, tx, libraryID, bookID)
+	if err != nil {
+		return nil, err
+	}
+	if returned == nil {
+		return nil, errors.New("no pending returned record found for this book in this library")
+	}
+
+	shelf, err := s.bookshelfRepo.FindAvailableShelf(ctx, tx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	if shelf == nil {
+		return nil, errors.New("no available shelf space in this library")
+	}
+
+	if err := s.bookshelfRepo.DecrementEmptySpace(ctx, tx, libraryID, shelf.ID); err != nil {
+		return nil, err
+	}
+
+	bookLocation := &models.BookLocation{
+		BookID:      bookID,
+		LibraryID:   libraryID,
+		BookshelfID: shelf.ID,
+	}
+	// Now that a shelf is assigned, inventory actually increments.
+	if err := s.bookInventoryRepo.IncrementInventory(ctx, tx, *bookLocation); err != nil {
+		return nil, fmt.Errorf("failed to increment inventory: %w", err)
+	}
+
+	if err := s.bookRepo.DeleteReturnedBook(ctx, tx, returned.ID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return shelf, nil
 }

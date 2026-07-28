@@ -43,36 +43,14 @@ func (r *CreateBookRequest) Validate() error {
 
 // CreateMemberRequest processes registrations and profile update actions.
 
-// BorrowBookRequest ingests identification parameters to issue an active asset loan.
-type BorrowBookRequest struct {
-	MemberID int `json:"member_id"`
-}
-
-// Validate confirms ID allocations are realistic before database processing.
-func (r *BorrowBookRequest) Validate() error {
-	if r.MemberID <= 0 {
-		return errors.New("invalid processing library member_id parameter")
-	}
-	return nil
-}
-
-// ReturnBookRequest carries indicators necessary to conclude open loan segments.
 type ReturnBookRequest struct {
-	BookID            int `json:"book_id"`
-	MemberID          int `json:"member_id"`
-	ReturnedLibraryID int `json:"returned_library_id"`
+	BookID int `json:"book_id"`
 }
 
 // Validate ensures entity key signatures match expectations.
 func (r *ReturnBookRequest) Validate() error {
 	if r.BookID <= 0 {
 		return errors.New("invalid return target book_id verification token")
-	}
-	if r.MemberID <= 0 {
-		return errors.New("invalid return member processing member_id identification token")
-	}
-	if r.ReturnedLibraryID <= 0 {
-		return errors.New("invalid processing library returned_library_id parameter")
 	}
 	return nil
 }

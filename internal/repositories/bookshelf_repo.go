@@ -18,6 +18,9 @@ type BookshelfRepository interface {
 	GetBookByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID, bookID int) (*dto.BookWithShelfStockResponse, error)
 	UpdateEmptySpace(ctx context.Context, exec GormExecutor, libraryID, shelfID int, spaceDelta int) error
 	Delete(ctx context.Context, exec GormExecutor, libraryID, shelfID int) error
+
+	FindAvailableShelf(ctx context.Context, exec GormExecutor, libraryID int) (*models.Bookshelf, error)
+	DecrementEmptySpace(ctx context.Context, exec GormExecutor, libraryID, shelfID int) error
 }
 
 type bookshelfRepository struct{}
@@ -226,5 +229,48 @@ func (r *bookshelfRepository) Delete(ctx context.Context, exec GormExecutor, lib
 		return fmt.Errorf("bookshelf not found in the specified library")
 	}
 
+	return nil
+}
+
+// FindAvailableShelf returns the first bookshelf in the library with room left.
+// FOR UPDATE SKIP LOCKED avoids two concurrent assign_shelf calls racing onto the same shelf.
+func (r *bookshelfRepository) FindAvailableShelf(ctx context.Context, exec GormExecutor, libraryID int) (*models.Bookshelf, error) {
+	query := `
+		SELECT id, library_id, code, capacity, empty_space, created_at
+		FROM bookshelves
+		WHERE library_id = $1 AND empty_space > 0
+		ORDER BY id
+		LIMIT 1
+		FOR UPDATE SKIP LOCKED;
+	`
+	var bs models.Bookshelf
+	err := exec.QueryRowContext(ctx, query, libraryID).
+		Scan(&bs.ID, &bs.LibraryID, &bs.Code, &bs.Capacity, &bs.EmptySpace, &bs.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find available shelf: %w", err)
+	}
+	return &bs, nil
+}
+
+func (r *bookshelfRepository) DecrementEmptySpace(ctx context.Context, exec GormExecutor, libraryID, shelfID int) error {
+	query := `
+		UPDATE bookshelves
+		SET empty_space = empty_space - 1
+		WHERE id = $2 AND library_id = $1 AND empty_space > 0;
+	`
+	res, err := exec.ExecContext(ctx, query, libraryID, shelfID)
+	if err != nil {
+		return fmt.Errorf("failed to decrement shelf space: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+	if rows == 0 {
+		return errors.New("shelf has no available space")
+	}
 	return nil
 }

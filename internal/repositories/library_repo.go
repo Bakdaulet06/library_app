@@ -11,11 +11,14 @@ import (
 type LibraryRepository interface {
 	Create(ctx context.Context, exec GormExecutor, m *models.Library) error
 	ListAll(ctx context.Context, exec GormExecutor) ([]models.Library, error)
-	ListAllBooks(ctx context.Context, exec GormExecutor, id int) ([]models.Book, error)
+	ListAllBooks(ctx context.Context, exec GormExecutor, id int) ([]models.LibraryBook, error)
 	ListAllLoans(ctx context.Context, exec GormExecutor, id int) ([]models.Loan, error)
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 	Update(ctx context.Context, exec GormExecutor, m *models.Library) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Library, error)
+
+	CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int) error
+	HasEmployee(ctx context.Context, exec GormExecutor, libraryID int) (bool, error)
 }
 
 type libraryRepository struct{}
@@ -84,12 +87,15 @@ func (r *libraryRepository) ListAll(ctx context.Context, exec GormExecutor) ([]m
 	return libraries, nil
 }
 
-func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor, libraryID int) ([]models.Book, error) {
+func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor, libraryID int) ([]models.LibraryBook, error) {
 	query := `
-		SELECT b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at
+		SELECT 
+			b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at,
+			SUM(bi.available_copies) AS total_available_copies
 		FROM books b
 		INNER JOIN book_inventory bi ON b.id = bi.book_id
 		WHERE bi.library_id = $1
+		GROUP BY b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at
 		ORDER BY b.id`
 
 	rows, err := exec.QueryContext(ctx, query, libraryID)
@@ -98,25 +104,25 @@ func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor,
 	}
 	defer rows.Close()
 
-	var books []models.Book
+	var libraryBooks []models.LibraryBook
 
 	for rows.Next() {
-		var b models.Book
-		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt); err != nil {
+		var b models.LibraryBook
+		if err := rows.Scan(&b.Book.ID, &b.Book.Title, &b.Book.Author, &b.Book.Isbn, &b.Book.GenreID, &b.Book.CreatedAt, &b.TotalAvailableCopies); err != nil {
 			return nil, fmt.Errorf("failed to scan book row: %w", err)
 		}
-		books = append(books, b)
+		libraryBooks = append(libraryBooks, b)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error during book rows iteration: %w", err)
 	}
 
-	if books == nil {
-		return []models.Book{}, nil // Return empty slice instead of nil
+	if libraryBooks == nil {
+		return []models.LibraryBook{}, nil // Return empty slice instead of nil
 	}
 
-	return books, nil
+	return libraryBooks, nil
 }
 
 // --- 2. ListAllLoans ---
@@ -161,4 +167,32 @@ func (r *libraryRepository) ListAllLoans(ctx context.Context, exec GormExecutor,
 	}
 
 	return loans, nil
+}
+
+// HasEmployee returns true if the given library already has an employee assigned.
+func (r *libraryRepository) HasEmployee(ctx context.Context, exec GormExecutor, libraryID int) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM library_employees WHERE library_id = $1)`
+
+	var exists bool
+	if err := exec.QueryRowContext(ctx, query, libraryID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("failed to check library employee existence: %w", err)
+	}
+	return exists, nil
+}
+
+// CreateLibraryEmployee links a member to a library as its employee.
+func (r *libraryRepository) CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int) error {
+	query := `
+		INSERT INTO library_employees (library_id, member_id)
+		VALUES ($1, $2);
+	`
+
+	_, err := exec.ExecContext(ctx, query, libraryID, memberID)
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			return ErrLibraryAlreadyHasEmployee // define this alongside ErrDuplicateEmail
+		}
+		return fmt.Errorf("failed to create library employee link: %w", err)
+	}
+	return nil
 }

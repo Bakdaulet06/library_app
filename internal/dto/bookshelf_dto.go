@@ -36,6 +36,6 @@ type BookWithShelfStockResponse struct {
 	Title           string `json:"title"`
 	Author          string `json:"author"`
 	ISBN            string `json:"isbn"`
-	GenreID         string `json:genre_id`
+	GenreID         string `json:"genre_id"`
 	AvailableCopies int    `json:"available_copies"`
 }

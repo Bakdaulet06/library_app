@@ -11,7 +11,7 @@ var jwtSecret = []byte("Zd5l8eEx28hwscKGd3fty2HRVGjEJmKngf664dg8R9w=")
 
 type Claims struct {
 	UserID int    `json:"user_id"`
-	Role   string `json:"role"` // "admin", "employee", "user"
+	Role   string `json:"role"` // "admin", "employee", "client"
 	jwt.RegisteredClaims
 }
 

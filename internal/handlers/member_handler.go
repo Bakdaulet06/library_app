@@ -16,31 +16,6 @@ func NewMemberHandler(s services.MemberService) *MemberHandler {
 	return &MemberHandler{memberService: s}
 }
 
-func (h *MemberHandler) RegisterMember(w http.ResponseWriter, r *http.Request) {
-	var req dto.CreateMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
-		return
-	}
-
-	if err := req.Validate(); err != nil {
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	member, err := h.memberService.RegisterMember(r.Context(), req)
-	if err != nil {
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(member)
-}
-
 func (h *MemberHandler) GetMember(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -74,7 +49,7 @@ func (h *MemberHandler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid member ID"}`, http.StatusBadRequest)
 		return
 	}
-	var req dto.CreateMemberRequest
+	var req dto.RegisterClientAndLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})

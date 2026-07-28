@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS returned_books

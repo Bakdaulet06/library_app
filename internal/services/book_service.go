@@ -19,7 +19,6 @@ type BookService interface {
 	UpdateBook(ctx context.Context, id int, req dto.CreateBookRequest) (*models.Book, error)
 	DeleteBook(ctx context.Context, id int) error
 
-	ReturnBook(ctx context.Context, req dto.ReturnBookRequest) error
 	ListAllLoans(ctx context.Context) ([]models.Loan, error)
 }
 
@@ -107,46 +106,6 @@ func (s *bookService) UpdateBook(ctx context.Context, id int, req dto.CreateBook
 
 func (s *bookService) DeleteBook(ctx context.Context, id int) error {
 	return s.bookRepo.Delete(ctx, s.db, id)
-}
-
-// --- 2. ReturnBook ---
-func (s *bookService) ReturnBook(ctx context.Context, req dto.ReturnBookRequest) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// 1. Verify Book Exists
-	book, err := s.bookRepo.GetByID(ctx, tx, req.BookID)
-	if err != nil {
-		return fmt.Errorf("database error checking book catalog: %w", err)
-	}
-	if book == nil {
-		return errors.New("return blocked: target catalog book no longer exists")
-	}
-
-	// 2. Verify Member Has an Active Loan to Return
-	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, req.BookID, req.MemberID)
-	if err != nil {
-		return fmt.Errorf("database error checking active loan: %w", err)
-	}
-	if !hasLoan {
-		return errors.New("return blocked: no active loan found for this member and book")
-	}
-
-	// 3. Mark Loan as Returned
-	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, req.BookID, req.MemberID, req.ReturnedLibraryID); err != nil {
-		return fmt.Errorf("failed to update loan record: %w", err)
-	}
-
-	// 4. Increment Stock in `book_inventory` for the Receiving Library Branch
-	// Uses `CreateOrUpdate` / `IncrementInventory` so returning to a new branch works seamlessly
-	if err := s.bookInventoryRepo.IncrementInventory(ctx, tx, req.BookID, req.ReturnedLibraryID); err != nil {
-		return fmt.Errorf("failed to increment inventory: %w", err)
-	}
-
-	return tx.Commit()
 }
 
 // --- 3. ListAllLoans ---

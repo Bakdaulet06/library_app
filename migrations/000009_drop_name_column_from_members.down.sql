@@ -1,0 +1,3 @@
+-- down
+ALTER TABLE members 
+ADD COLUMN IF NOT EXISTS name VARCHAR(255);

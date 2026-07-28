@@ -60,6 +60,7 @@ func main() {
 	libraryRepo := repositories.NewLibraryRepository()
 	bookshelfRepo := repositories.NewBookshelfRepository()
 	userRepo := repositories.NewUserRepository()
+	empRepo := repositories.NewEmployeeRepository()
 
 	// 3. Inject repositories to bootstrap business workflows
 	bookService := services.NewBookService(db, bookRepo, memberRepo, bookInventoryRepo)
@@ -68,6 +69,7 @@ func main() {
 	libraryService := services.NewLibraryService(db, libraryRepo, bookRepo, memberRepo, bookInventoryRepo, bookshelfRepo)
 	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo)
 	userService := services.NewUserService(db, userRepo)
+	empService := services.NewEmployeeService(db, empRepo, memberRepo, userRepo, libraryRepo)
 
 	// 4. Bind services into HTTP server payload multiplexer routers
 	bookHandler := handlers.NewBookHandler(bookService)
@@ -76,6 +78,7 @@ func main() {
 	libraryHandler := handlers.NewLibraryHandler(libraryService, bookInventoryService)
 	bookshelfHandler := handlers.NewBookshelfHandler(bookshelfService)
 	userHandler := handlers.NewUserHandler(userService)
+	empHandler := handlers.NewEmployeeHandler(empService)
 
 	//middleware
 	authMiddleware := middleware.Authenticate(userService)
@@ -85,6 +88,7 @@ func main() {
 
 	mux.HandleFunc("POST /register", userHandler.Register)
 	mux.HandleFunc("POST /login", userHandler.Login)
+	mux.Handle("POST /register_client", protected(authMiddleware, userHandler.Register, "admin", "employee"))
 
 	// ----------------------------------------------------
 	// Libraries
@@ -102,7 +106,10 @@ func main() {
 	mux.Handle("GET /libraries/{id}/loans", protected(authMiddleware, libraryHandler.GetLibraryLoans, "admin", "employee"))
 	mux.Handle("DELETE /libraries/{id}/books/{book_id}", protected(authMiddleware, libraryHandler.DeleteBookFromLibrary, "admin"))
 	mux.Handle("GET /libraries/{id}/books/genres/{genre_id}", protected(authMiddleware, libraryHandler.GetLibraryBooksByGenre))
-	mux.Handle("POST /libraries/{id}/books/{book_id}/borrow", protected(authMiddleware, libraryHandler.BorrowBook, "user"))
+	mux.Handle("POST /libraries/{id}/books/{book_id}/borrow", protected(authMiddleware, libraryHandler.BorrowBook, "client"))
+	mux.Handle("POST /libraries/{id}/return", protected(authMiddleware, libraryHandler.ReturnBook, "client"))
+	mux.Handle("GET /libraries/{id}/returned_books", protected(authMiddleware, libraryHandler.ListReturnedBooks, "employee"))
+	mux.Handle("POST /libraries/{id}/returned_books/{book_id}/assign_shelf", protected(authMiddleware, libraryHandler.AssignShelf, "employee"))
 
 	// ----------------------------------------------------
 	// Bookshelves
@@ -140,15 +147,21 @@ func main() {
 	// MEMBER ROUTES (Admin-Only)
 	// ====================================================
 
-	mux.Handle("GET /members", protected(authMiddleware, memberHandler.ListMembers, "admin"))
-	mux.Handle("POST /members", protected(authMiddleware, memberHandler.RegisterMember, "admin"))
-	mux.Handle("GET /members/{id}", protected(authMiddleware, memberHandler.GetMember, "admin"))
-	mux.Handle("GET /members/{id}/loans", protected(authMiddleware, memberHandler.GetMemberLoans, "admin"))
-	mux.Handle("PUT /members/{id}", protected(authMiddleware, memberHandler.UpdateMember, "admin"))
-	mux.Handle("DELETE /members/{id}", protected(authMiddleware, memberHandler.DeleteMember, "admin"))
+	mux.Handle("GET /clients", protected(authMiddleware, memberHandler.ListMembers, "admin"))
+	mux.Handle("POST /clients", protected(authMiddleware, userHandler.RegisterClient, "admin"))
+	mux.Handle("GET /clients/{id}", protected(authMiddleware, memberHandler.GetMember, "admin"))
+	mux.Handle("GET /clients/{id}/loans", protected(authMiddleware, memberHandler.GetMemberLoans, "admin"))
+	mux.Handle("PUT /clients/{id}", protected(authMiddleware, memberHandler.UpdateMember, "admin"))
+	mux.Handle("DELETE /clients/{id}", protected(authMiddleware, memberHandler.DeleteMember, "admin"))
 
-	mux.HandleFunc("/return", bookHandler.HandleReturn)
-	mux.HandleFunc("/loans", bookHandler.HandleListLoans)
+	// Protected routes (Admin only)
+	mux.Handle("GET /employees", protected(authMiddleware, empHandler.ListEmployees, "admin"))
+	mux.Handle("GET /employees/{member_id}", protected(authMiddleware, empHandler.GetEmployee, "admin"))
+	mux.Handle("POST /employees", protected(authMiddleware, empHandler.RegisterEmployee, "admin"))
+	mux.Handle("PUT /employees/{member_id}", protected(authMiddleware, empHandler.UpdateEmployee, "admin"))
+	mux.Handle("DELETE /employees/{member_id}", protected(authMiddleware, empHandler.DeleteEmployee, "admin"))
+
+	mux.Handle("/loans", protected(authMiddleware, bookHandler.HandleListLoans, "admin"))
 
 	// Global simple middleware layer wrapper for execution request logging
 	loggingMux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
