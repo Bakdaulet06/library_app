@@ -7,12 +7,10 @@ import (
 
 // CreateBookRequest handles input payloads for both cataloging and updating books.
 type CreateBookRequest struct {
-	Title           string `json:"title"`
-	Author          string `json:"author"`
-	Isbn            string `json:"isbn"`
-	AvailableCopies int    `json:"available_copies"`
-	GenreID         *int   `json:"genre_id"`
-	LibraryID       int    `json:"library_id"`
+	Title   string `json:"title"`
+	Author  string `json:"author"`
+	Isbn    string `json:"isbn"`
+	GenreID *int   `json:"genre_id"`
 }
 
 // Validate asserts data sanity for book creations and modifications.
@@ -26,9 +24,6 @@ func (r *CreateBookRequest) Validate() error {
 	isbnClean := strings.TrimSpace(r.Isbn)
 	if len(isbnClean) != 10 && len(isbnClean) != 13 {
 		return errors.New("isbn code must be exactly 10 or 13 characters long")
-	}
-	if r.AvailableCopies < 0 {
-		return errors.New("available copies balance inventory cannot be negative numbers")
 	}
 	if r.GenreID != nil {
 		if *r.GenreID < 1 || *r.GenreID > 5 {

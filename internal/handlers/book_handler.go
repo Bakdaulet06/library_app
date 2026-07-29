@@ -121,7 +121,8 @@ func (h *BookHandler) DeleteBook(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Book successfully deleted"})
 }
 
 // Append this function to the bottom of internal/handlers/book_handler.go

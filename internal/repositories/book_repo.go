@@ -17,7 +17,7 @@ type GormExecutor interface {
 }
 
 type BookRepository interface {
-	Create(ctx context.Context, exec GormExecutor, b *models.Book, libraryID, availableCopies int) error
+	Create(ctx context.Context, exec GormExecutor, b *models.Book) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Book, error)
 	GetByISBN(ctx context.Context, exec GormExecutor, isbn string) (*models.Book, error)
 	GetByGenreID(ctx context.Context, exec GormExecutor, genreID int) ([]models.Book, error)
@@ -46,20 +46,12 @@ func NewBookRepository() BookRepository {
 	return &bookRepository{}
 }
 
-func (r *bookRepository) Create(ctx context.Context, exec GormExecutor, b *models.Book, libraryID, availableCopies int) error {
+func (r *bookRepository) Create(ctx context.Context, exec GormExecutor, b *models.Book) error {
 	// 1. Insert book
 	queryBook := `INSERT INTO books (title, author, isbn, genre_id) 
                   VALUES ($1, $2, $3, $4) RETURNING id, created_at`
 	err := exec.QueryRowContext(ctx, queryBook, b.Title, b.Author, b.Isbn, b.GenreID).
 		Scan(&b.ID, &b.CreatedAt)
-	if err != nil {
-		return err
-	}
-
-	// 2. Insert inventory
-	queryInventory := `INSERT INTO book_inventory (library_id, book_id, available_copies) 
-                       VALUES ($1, $2, $3)`
-	_, err = exec.ExecContext(ctx, queryInventory, libraryID, b.ID, availableCopies)
 	return err
 }
 

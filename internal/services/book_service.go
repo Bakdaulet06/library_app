@@ -49,7 +49,7 @@ func (s *bookService) CreateBook(ctx context.Context, req dto.CreateBookRequest)
 		GenreID: *req.GenreID,
 	}
 
-	if err := s.bookRepo.Create(ctx, s.db, book, *req.GenreID, req.AvailableCopies); err != nil {
+	if err := s.bookRepo.Create(ctx, s.db, book); err != nil {
 		return nil, err
 	}
 	return book, nil
