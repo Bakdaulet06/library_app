@@ -54,7 +54,7 @@ func Authenticate(userService services.UserService) func(http.Handler) http.Hand
 	}
 }
 
-func RequireRoles(allowedRoles ...string) func(http.Handler) http.Handler {
+func RequireRoles(allowedRoles ...models.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 1. Grab user attached by Authenticate middleware
@@ -67,7 +67,7 @@ func RequireRoles(allowedRoles ...string) func(http.Handler) http.Handler {
 			// 2. Check if user's role matches any allowed role
 			hasRole := false
 			for _, role := range allowedRoles {
-				if user.Role == role {
+				if user.Role == string(role) {
 					hasRole = true
 					break
 				}
