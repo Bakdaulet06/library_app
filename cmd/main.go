@@ -59,6 +59,8 @@ func main() {
 	bookshelfRepo := repositories.NewBookshelfRepository()
 	userRepo := repositories.NewUserRepository()
 	empRepo := repositories.NewEmployeeRepository()
+	orderRepo := repositories.NewOrderRepository()
+	profileRepo := repositories.NewProfileRepository()
 
 	// 3. Inject repositories to bootstrap business workflows
 	bookService := services.NewBookService(db, bookRepo, memberRepo, bookInventoryRepo)
@@ -68,6 +70,8 @@ func main() {
 	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo)
 	userService := services.NewUserService(db, userRepo)
 	empService := services.NewEmployeeService(db, empRepo, memberRepo, userRepo, libraryRepo)
+	orderService := services.NewOrderService(db, orderRepo, bookInventoryRepo, bookshelfRepo)
+	profileService := services.NewProfileService(db, profileRepo)
 
 	// 4. Bind services into HTTP server payload multiplexer routers
 	bookHandler := handlers.NewBookHandler(bookService)
@@ -77,6 +81,8 @@ func main() {
 	bookshelfHandler := handlers.NewBookshelfHandler(bookshelfService)
 	userHandler := handlers.NewUserHandler(userService)
 	empHandler := handlers.NewEmployeeHandler(empService)
+	orderHandler := handlers.NewOrderHandler(orderService, profileService)
+	profileHandler := handlers.NewProfileHandler(profileService)
 
 	// middleware
 	authMiddleware := middleware.Authenticate(userService)
@@ -93,6 +99,8 @@ func main() {
 		UserHandler:          userHandler,
 		EmployeeHandler:      empHandler,
 		AuthMiddleware:       authMiddleware,
+		OrderHandler:         orderHandler,
+		ProfileHandler:       profileHandler,
 	})
 
 	// Global simple middleware layer wrapper for execution request logging

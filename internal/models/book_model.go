@@ -9,5 +9,6 @@ type Book struct {
 	Author    string    `json:"author"`
 	Isbn      string    `json:"isbn"`
 	GenreID   int       `json:"genre_id"` // <-- Foreign Key to libraries.id
+	Price     float64   `json:"price"`
 	CreatedAt time.Time `json:"created_at"`
 }

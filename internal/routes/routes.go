@@ -18,6 +18,9 @@ type Dependencies struct {
 	BookshelfHandler     *handlers.BookshelfHandler
 	UserHandler          *handlers.UserHandler
 	EmployeeHandler      *handlers.EmployeeHandler
+	PurchaseHandler      *handlers.OrderHandler
+	ProfileHandler       *handlers.ProfileHandler
+	OrderHandler         *handlers.OrderHandler
 
 	AuthMiddleware func(http.Handler) http.Handler
 }
@@ -32,6 +35,8 @@ func RegisterAll(mux *http.ServeMux, deps Dependencies) {
 	registerMemberRoutes(mux, deps)
 	registerEmployeeRoutes(mux, deps)
 	registerLoanRoutes(mux, deps)
+	registerProfileRoutes(mux, deps)
+	registerOrderRoutes(mux, deps)
 }
 
 // protected applies auth middleware, and optionally role-based middleware,

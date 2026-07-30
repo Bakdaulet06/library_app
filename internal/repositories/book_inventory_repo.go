@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"library/internal/models"
@@ -15,6 +16,7 @@ type BookInventoryRepository interface {
 
 	DecrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error
 	IncrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error
+	UpdateAvailableCopies(ctx context.Context, tx *sql.Tx, libraryID, bookID, bookshelfID, copiesDelta int) error
 
 	GetShelfAllocationsByBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) ([]ShelfAllocation, error)
 }
@@ -183,4 +185,36 @@ func (r *bookInventoryRepository) GetShelfAllocationsByBook(ctx context.Context,
 	}
 
 	return allocations, rows.Err()
+}
+
+// DecrementAvailableCopies reduces stock by quantity. Caller must have
+// already verified availableCopies >= quantity via LockInventoryAndPrice
+// within the same transaction.
+// UpdateAvailableCopies modifies stock for a single bookshelf inside a transaction.
+// Pass a negative value for sales/loans (e.g., -4) and positive for returns/restocks (+4).
+func (r *bookInventoryRepository) UpdateAvailableCopies(
+	ctx context.Context,
+	tx *sql.Tx,
+	libraryID, bookID, bookshelfID, copiesDelta int,
+) error {
+	const query = `
+		UPDATE book_inventory
+		SET available_copies = available_copies + $1
+		WHERE library_id = $2 AND book_id = $3 AND bookshelf_id = $4 AND (available_copies + $1 >= 0)
+	`
+
+	res, err := tx.ExecContext(ctx, query, copiesDelta, libraryID, bookID, bookshelfID)
+	if err != nil {
+		return fmt.Errorf("failed to update available copies for shelf %d: %w", bookshelfID, err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("insufficient stock or invalid shelf %d for book %d", bookshelfID, bookID)
+	}
+
+	return nil
 }

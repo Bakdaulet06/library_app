@@ -22,6 +22,12 @@ type AuthResponse struct {
 	User  models.BookMember `json:"user"`
 }
 
+type UpdateClientProfile struct {
+	Email       string `json:"email"`
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
 func (r RegisterRequest) Validate() error {
 	if strings.TrimSpace(r.Email) == "" {
 		return errors.New("email is required")
@@ -41,6 +47,16 @@ func (r RegisterClientAndLoginRequest) Validate() error {
 	}
 	if len(r.Password) < 8 {
 		return errors.New("password must be at least 8 characters long")
+	}
+	return nil
+}
+
+func (r UpdateClientProfile) Validate() error {
+	if strings.TrimSpace(r.Email) == "" {
+		return errors.New("email is required")
+	}
+	if r.OldPassword == "" || r.NewPassword == "" {
+		return errors.New("password can't be empty")
 	}
 	return nil
 }
