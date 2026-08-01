@@ -8,6 +8,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+          ignore:
+            - migrations_old/
 
   db:
     image: postgres:16-alpine

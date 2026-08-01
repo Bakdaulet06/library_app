@@ -31,6 +31,8 @@ func (h *EmployeeHandler) RegisterEmployee(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	req.SetDefaults()
+
 	emp, err := h.employeeService.RegisterEmployee(r.Context(), req)
 	if err != nil {
 		w.WriteHeader(http.StatusConflict)
@@ -44,9 +46,9 @@ func (h *EmployeeHandler) RegisterEmployee(w http.ResponseWriter, r *http.Reques
 
 func (h *EmployeeHandler) GetEmployee(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	memberID, err := strconv.Atoi(r.PathValue("id"))
+	memberID, err := strconv.Atoi(r.PathValue("member_id"))
 	if err != nil || memberID <= 0 {
-		http.Error(w, `{"error":"invalid employee ID"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid member ID"}`, http.StatusBadRequest)
 		return
 	}
 	emp, err := h.employeeService.GetEmployeeByMemberID(r.Context(), memberID)
@@ -71,9 +73,9 @@ func (h *EmployeeHandler) ListEmployees(w http.ResponseWriter, r *http.Request) 
 
 func (h *EmployeeHandler) UpdateEmployee(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	memberID, err := strconv.Atoi(r.PathValue("id"))
+	memberID, err := strconv.Atoi(r.PathValue("member_id"))
 	if err != nil || memberID <= 0 {
-		http.Error(w, `{"error":"invalid employee ID"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid member ID"}`, http.StatusBadRequest)
 		return
 	}
 	var req dto.UpdateEmployeeRequest
@@ -100,9 +102,9 @@ func (h *EmployeeHandler) UpdateEmployee(w http.ResponseWriter, r *http.Request)
 
 func (h *EmployeeHandler) DeleteEmployee(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	memberID, err := strconv.Atoi(r.PathValue("id"))
+	memberID, err := strconv.Atoi(r.PathValue("member_id"))
 	if err != nil || memberID <= 0 {
-		http.Error(w, `{"error":"invalid employee ID"}`, http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid member ID"}`, http.StatusBadRequest)
 		return
 	}
 	if err := h.employeeService.DeleteEmployee(r.Context(), memberID); err != nil {

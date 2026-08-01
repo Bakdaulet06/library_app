@@ -15,7 +15,7 @@ import (
 type MemberService interface {
 	GetMemberByID(ctx context.Context, id int) (*models.BookMember, error)
 	ListMembers(ctx context.Context) ([]models.BookMember, error)
-	UpdateMember(ctx context.Context, id int, req dto.RegisterClientAndLoginRequest) (*models.BookMember, error)
+	UpdateMember(ctx context.Context, id int, req dto.RegisterRequest) (*models.BookMember, error)
 	DeleteMember(ctx context.Context, id int) error
 	GetMemberLoans(ctx context.Context, memberID int) ([]models.Loan, error)
 }
@@ -45,7 +45,7 @@ func (s *memberService) ListMembers(ctx context.Context) ([]models.BookMember, e
 	return s.memberRepo.List(ctx, s.db)
 }
 
-func (s *memberService) UpdateMember(ctx context.Context, id int, req dto.RegisterClientAndLoginRequest) (*models.BookMember, error) {
+func (s *memberService) UpdateMember(ctx context.Context, id int, req dto.RegisterRequest) (*models.BookMember, error) {
 	member, err := s.memberRepo.GetByID(ctx, s.db, id)
 	if err != nil {
 		return nil, err

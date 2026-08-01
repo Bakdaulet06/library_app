@@ -79,7 +79,7 @@ func (r *bookInventoryRepository) AddCopies(ctx context.Context, exec GormExecut
 // Fetches all inventory stock records across all libraries
 func (r *bookInventoryRepository) List(ctx context.Context, exec GormExecutor) ([]models.BookInventory, error) {
 	query := `
-		SELECT library_id, book_id, available_copies 
+		SELECT library_id, book_id, bookshelf_id, available_copies 
 		FROM book_inventory 
 		ORDER BY library_id, book_id`
 
@@ -93,7 +93,7 @@ func (r *bookInventoryRepository) List(ctx context.Context, exec GormExecutor) (
 
 	for rows.Next() {
 		var item models.BookInventory
-		if err := rows.Scan(&item.LibraryID, &item.BookID, &item.AvailableCopies); err != nil {
+		if err := rows.Scan(&item.LibraryID, &item.BookID, &item.BookshelfID, &item.AvailableCopies); err != nil {
 			return nil, fmt.Errorf("failed to scan book inventory row: %w", err)
 		}
 		inventory = append(inventory, item)

@@ -11,7 +11,7 @@ import (
 )
 
 type BookshelfRepository interface {
-	Create(ctx context.Context, exec GormExecutor, shelf *models.Bookshelf) error
+	Create(ctx context.Context, exec GormExecutor, shelf *models.Bookshelf, code string) error
 	GetByID(ctx context.Context, exec GormExecutor, libraryID, shelfID int) (*models.Bookshelf, error)
 	GetByLibraryID(ctx context.Context, exec GormExecutor, libraryID int) ([]models.Bookshelf, error)
 	GetBooksByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID int) ([]dto.BookWithShelfStockResponse, error)
@@ -21,6 +21,7 @@ type BookshelfRepository interface {
 
 	FindAvailableShelf(ctx context.Context, exec GormExecutor, libraryID int) (*models.Bookshelf, error)
 	DecrementEmptySpace(ctx context.Context, exec GormExecutor, libraryID, shelfID int) error
+	GetNextBookshelfCode(ctx context.Context, exec GormExecutor) (string, error)
 }
 
 type bookshelfRepository struct{}
@@ -31,17 +32,19 @@ func NewBookshelfRepository() BookshelfRepository {
 
 // Create inserts a new bookshelf into a specific library.
 // empty_space is automatically initialized to match capacity.
-func (r *bookshelfRepository) Create(ctx context.Context, exec GormExecutor, shelf *models.Bookshelf) error {
+func (r *bookshelfRepository) Create(ctx context.Context, exec GormExecutor, shelf *models.Bookshelf, code string) error {
 	query := `
 		INSERT INTO bookshelves (library_id, code, capacity, empty_space)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, created_at
 	`
-	err := exec.QueryRowContext(ctx, query, shelf.LibraryID, shelf.Code, shelf.Capacity, shelf.Capacity).
+	err := exec.QueryRowContext(ctx, query, shelf.LibraryID, code, shelf.Capacity, shelf.Capacity).
 		Scan(&shelf.ID, &shelf.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create bookshelf: %w", err)
 	}
+	shelf.Code = code
+	shelf.EmptySpace = shelf.Capacity
 	return nil
 }
 
@@ -273,4 +276,39 @@ func (r *bookshelfRepository) DecrementEmptySpace(ctx context.Context, exec Gorm
 		return errors.New("shelf has no available space")
 	}
 	return nil
+}
+
+func (r *bookshelfRepository) GetNextBookshelfCode(ctx context.Context, exec GormExecutor) (string, error) {
+	// Query to get all existing codes ordered alphabetically
+	query := `SELECT code FROM bookshelves ORDER BY code ASC`
+
+	rows, err := exec.QueryContext(ctx, query)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch existing bookshelf codes: %w", err)
+	}
+	defer rows.Close()
+
+	// Store used indices in a set/map for O(1) lookup
+	usedIndices := make(map[int]bool)
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return "", err
+		}
+
+		// Convert code string (e.g., "B-3") back to index number
+		if index, err := dto.ParseCodeToIndex(code); err == nil {
+			usedIndices[index] = true
+		}
+	}
+
+	// Find the smallest missing non-negative integer index
+	const maxCodes = 260
+	for i := 0; i < maxCodes; i++ {
+		if !usedIndices[i] {
+			return dto.GenerateBookshelfCode(i) // Found the first missing slot!
+		}
+	}
+
+	return "", errors.New("can't create more bookshelves")
 }

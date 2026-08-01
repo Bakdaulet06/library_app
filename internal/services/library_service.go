@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"library/internal/dto"
+	"library/internal/geocoder"
 	"library/internal/models"
 	"library/internal/repositories"
 )
@@ -34,6 +35,7 @@ type libraryService struct {
 	memberRepo        repositories.MemberRepository
 	bookInventoryRepo repositories.BookInventoryRepository
 	bookshelfRepo     repositories.BookshelfRepository
+	geocoder          geocoder.Geocoder
 }
 
 func NewLibraryService(
@@ -43,6 +45,7 @@ func NewLibraryService(
 	memberRepo repositories.MemberRepository,
 	bookInventoryRepo repositories.BookInventoryRepository,
 	bookshelfRepo repositories.BookshelfRepository,
+	geocoder geocoder.Geocoder,
 ) LibraryService {
 	return &libraryService{
 		db:                db,
@@ -51,14 +54,29 @@ func NewLibraryService(
 		memberRepo:        memberRepo,
 		bookInventoryRepo: bookInventoryRepo,
 		bookshelfRepo:     bookshelfRepo,
+		geocoder:          geocoder,
 	}
 }
 
 // 1. RegisterLibrary
 func (s *libraryService) RegisterLibrary(ctx context.Context, req dto.CreateLibraryRequest) (*models.Library, error) {
+	normalizedAddress, err := s.geocoder.ValidateAndNormalizeAddress(ctx, req.Address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address: %w", err)
+	}
+
+	// 2. Check if a library is already registered at this verified address
+	existingLibrary, err := s.libraryRepo.LibraryExists(ctx, s.db, normalizedAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check library existence: %w", err)
+	}
+	if existingLibrary {
+		return nil, errors.New("a library is already registered at this verified address")
+	}
+
 	library := &models.Library{
 		Name:    req.Name,
-		Address: req.Address,
+		Address: normalizedAddress,
 	}
 
 	if err := s.libraryRepo.Create(ctx, s.db, library); err != nil {

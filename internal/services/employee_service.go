@@ -53,13 +53,12 @@ func (s *employeeService) RegisterEmployee(ctx context.Context, req dto.CreateEm
 	}
 	defer tx.Rollback()
 
-	// pre-check inside the transaction, so it sees a consistent view
-	hasEmployee, err := s.libraryRepo.HasEmployee(ctx, tx, req.LibraryID)
+	canAdd, err := s.libraryRepo.CanAddEmployee(ctx, tx, req.LibraryID, req.Position)
 	if err != nil {
 		return nil, err
 	}
-	if hasEmployee {
-		return nil, errors.New("this library already has an assigned employee")
+	if !canAdd {
+		return nil, fmt.Errorf("library %d has already reached maximum capacity for position %s", req.LibraryID, req.Position)
 	}
 
 	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -86,7 +85,7 @@ func (s *employeeService) RegisterEmployee(ctx context.Context, req dto.CreateEm
 		return nil, err
 	}
 
-	if err := s.libraryRepo.CreateLibraryEmployee(ctx, tx, req.LibraryID, member.ID); err != nil {
+	if err := s.libraryRepo.CreateLibraryEmployee(ctx, tx, req.LibraryID, emp.MemberID, emp.Position); err != nil {
 		if errors.Is(err, repositories.ErrLibraryAlreadyHasEmployee) {
 			return nil, errors.New("this library already has an assigned employee")
 		}
@@ -117,7 +116,15 @@ func (s *employeeService) ListEmployees(ctx context.Context) ([]models.Employee,
 }
 
 func (s *employeeService) UpdateEmployee(ctx context.Context, memberID int, req dto.UpdateEmployeeRequest) (*models.Employee, error) {
-	emp, err := s.employeeRepo.GetByMemberID(ctx, s.db, memberID)
+	// 1. Begin Transaction
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 2. Fetch existing employee using transaction
+	emp, err := s.employeeRepo.GetByMemberID(ctx, tx, memberID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,12 +132,42 @@ func (s *employeeService) UpdateEmployee(ctx context.Context, memberID int, req 
 		return nil, errors.New("target employee profile not found")
 	}
 
-	emp.Position = req.Position
+	oldPosition := emp.Position
+	newPosition := req.Position
+
+	// 3. Only check capacity if the position is actually CHANGING
+	if oldPosition != newPosition {
+		canAdd, err := s.libraryRepo.CanAddEmployee(ctx, tx, emp.LibraryID, newPosition)
+		if err != nil {
+			return nil, err
+		}
+		if !canAdd {
+			return nil, fmt.Errorf("library %d has already reached maximum capacity for position %s", emp.LibraryID, newPosition)
+		}
+	}
+
+	// 4. Update struct fields
+	emp.Position = newPosition
 	emp.Salary = req.Salary
 
-	if err := s.employeeRepo.Update(ctx, s.db, emp); err != nil {
+	// 5. Update main employee table
+	if err := s.employeeRepo.Update(ctx, tx, emp); err != nil {
 		return nil, err
 	}
+
+	// 6. Update junction table if position changed
+	if oldPosition != newPosition {
+		err := s.libraryRepo.UpdateLibraryEmployeePosition(ctx, tx, emp.LibraryID, emp.MemberID, oldPosition, newPosition)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update library employee position: %w", err)
+		}
+	}
+
+	// 7. Commit transaction
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
 	return emp, nil
 }
 

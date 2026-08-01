@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"library/internal/geocoder"
 	"library/internal/handlers"
 	"library/internal/middleware"
 	"library/internal/repositories"
@@ -51,6 +52,8 @@ func main() {
 	// Run automatic database migrations
 	runMigrations(db)
 
+	geocoder := geocoder.NewGeocoder()
+
 	// 2. Instantiate data repositories
 	bookRepo := repositories.NewBookRepository()
 	memberRepo := repositories.NewMemberRepository()
@@ -61,17 +64,19 @@ func main() {
 	empRepo := repositories.NewEmployeeRepository()
 	orderRepo := repositories.NewOrderRepository()
 	profileRepo := repositories.NewProfileRepository()
+	genreRepo := repositories.NewGenreRepository()
 
 	// 3. Inject repositories to bootstrap business workflows
 	bookService := services.NewBookService(db, bookRepo, memberRepo, bookInventoryRepo)
 	memberService := services.NewMemberService(db, memberRepo, bookRepo)
 	bookInventoryService := services.NewBookInventoryService(db, bookInventoryRepo, bookRepo, libraryRepo, bookshelfRepo)
-	libraryService := services.NewLibraryService(db, libraryRepo, bookRepo, memberRepo, bookInventoryRepo, bookshelfRepo)
+	libraryService := services.NewLibraryService(db, libraryRepo, bookRepo, memberRepo, bookInventoryRepo, bookshelfRepo, *geocoder)
 	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo)
 	userService := services.NewUserService(db, userRepo)
 	empService := services.NewEmployeeService(db, empRepo, memberRepo, userRepo, libraryRepo)
 	orderService := services.NewOrderService(db, orderRepo, bookInventoryRepo, bookshelfRepo)
 	profileService := services.NewProfileService(db, profileRepo)
+	genreService := services.NewGenreService(db, genreRepo)
 
 	// 4. Bind services into HTTP server payload multiplexer routers
 	bookHandler := handlers.NewBookHandler(bookService)
@@ -83,6 +88,7 @@ func main() {
 	empHandler := handlers.NewEmployeeHandler(empService)
 	orderHandler := handlers.NewOrderHandler(orderService, profileService)
 	profileHandler := handlers.NewProfileHandler(profileService)
+	genreHandler := handlers.NewGenreHandler(genreService)
 
 	// middleware
 	authMiddleware := middleware.Authenticate(userService)
@@ -101,6 +107,7 @@ func main() {
 		AuthMiddleware:       authMiddleware,
 		OrderHandler:         orderHandler,
 		ProfileHandler:       profileHandler,
+		GenreHandler:         genreHandler,
 	})
 
 	// Global simple middleware layer wrapper for execution request logging

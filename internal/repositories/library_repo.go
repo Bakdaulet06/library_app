@@ -16,9 +16,15 @@ type LibraryRepository interface {
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 	Update(ctx context.Context, exec GormExecutor, m *models.Library) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Library, error)
+	LibraryExists(ctx context.Context, exec GormExecutor, address string) (bool, error)
 
-	CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int) error
-	HasEmployee(ctx context.Context, exec GormExecutor, libraryID int) (bool, error)
+	CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int, position models.Position) error
+	CanAddEmployee(ctx context.Context, exec GormExecutor, libraryID int, pos models.Position) (bool, error)
+	HasMaxSanitars(ctx context.Context, exec GormExecutor, libraryID int) (bool, error)
+	HasMaxAssistants(ctx context.Context, exec GormExecutor, libraryID int) (bool, error)
+	HasLibrarian(ctx context.Context, exec GormExecutor, libraryID int) (bool, error)
+	CountEmployeesByPosition(ctx context.Context, exec GormExecutor, libraryID int, pos models.Position) (int, error)
+	UpdateLibraryEmployeePosition(ctx context.Context, exec GormExecutor, libraryID, memberID int, oldPos, newPos models.Position) error
 }
 
 type libraryRepository struct{}
@@ -169,25 +175,14 @@ func (r *libraryRepository) ListAllLoans(ctx context.Context, exec GormExecutor,
 	return loans, nil
 }
 
-// HasEmployee returns true if the given library already has an employee assigned.
-func (r *libraryRepository) HasEmployee(ctx context.Context, exec GormExecutor, libraryID int) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM library_employees WHERE library_id = $1)`
-
-	var exists bool
-	if err := exec.QueryRowContext(ctx, query, libraryID).Scan(&exists); err != nil {
-		return false, fmt.Errorf("failed to check library employee existence: %w", err)
-	}
-	return exists, nil
-}
-
 // CreateLibraryEmployee links a member to a library as its employee.
-func (r *libraryRepository) CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int) error {
+func (r *libraryRepository) CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int, position models.Position) error {
 	query := `
-		INSERT INTO library_employees (library_id, member_id)
-		VALUES ($1, $2);
+		INSERT INTO library_employees (library_id, member_id, position)
+		VALUES ($1, $2, $3);
 	`
 
-	_, err := exec.ExecContext(ctx, query, libraryID, memberID)
+	_, err := exec.ExecContext(ctx, query, libraryID, memberID, position)
 	if err != nil {
 		if isDuplicateKeyError(err) {
 			return ErrLibraryAlreadyHasEmployee // define this alongside ErrDuplicateEmail
@@ -195,4 +190,82 @@ func (r *libraryRepository) CreateLibraryEmployee(ctx context.Context, exec Gorm
 		return fmt.Errorf("failed to create library employee link: %w", err)
 	}
 	return nil
+}
+
+func (r *libraryRepository) LibraryExists(ctx context.Context, exec GormExecutor, address string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM libraries WHERE address = $1)`
+
+	var exists bool
+	err := exec.QueryRowContext(ctx, query, address).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check library existence: %w", err)
+	}
+
+	return exists, nil
+}
+
+// CountEmployeesByPosition counts how many employees hold a specific position in a given library.
+func (r *libraryRepository) CountEmployeesByPosition(ctx context.Context, exec GormExecutor, libraryID int, pos models.Position) (int, error) {
+	query := `SELECT COUNT(1) FROM library_employees WHERE library_id = $1 AND position = $2`
+
+	var count int
+	if err := exec.QueryRowContext(ctx, query, libraryID, pos).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count employees for position %s: %w", pos, err)
+	}
+
+	return count, nil
+}
+
+// HasLibrarian checks if a library already has reached its maximum (1) Librarian.
+func (r *libraryRepository) HasLibrarian(ctx context.Context, exec GormExecutor, libraryID int) (bool, error) {
+	count, err := r.CountEmployeesByPosition(ctx, exec, libraryID, models.Librarian)
+	if err != nil {
+		return false, err
+	}
+	return count >= models.MaxLibrarians, nil
+}
+
+// HasMaxAssistants checks if a library already has reached its maximum (2) Assistants.
+func (r *libraryRepository) HasMaxAssistants(ctx context.Context, exec GormExecutor, libraryID int) (bool, error) {
+	count, err := r.CountEmployeesByPosition(ctx, exec, libraryID, models.Assistant)
+	if err != nil {
+		return false, err
+	}
+	return count >= models.MaxAssistants, nil
+}
+
+// HasMaxSanitars checks if a library already has reached its maximum (2) Sanitars.
+func (r *libraryRepository) HasMaxSanitars(ctx context.Context, exec GormExecutor, libraryID int) (bool, error) {
+	count, err := r.CountEmployeesByPosition(ctx, exec, libraryID, models.Sanitar)
+	if err != nil {
+		return false, err
+	}
+	return count >= models.MaxSanitars, nil
+}
+
+// CanAddEmployee is a convenience method to check capacity dynamically for any position.
+func (r *libraryRepository) CanAddEmployee(ctx context.Context, exec GormExecutor, libraryID int, pos models.Position) (bool, error) {
+	switch pos {
+	case models.Librarian:
+		hasMax, err := r.HasLibrarian(ctx, exec, libraryID)
+		return !hasMax, err
+	case models.Assistant:
+		hasMax, err := r.HasMaxAssistants(ctx, exec, libraryID)
+		return !hasMax, err
+	case models.Sanitar:
+		hasMax, err := r.HasMaxSanitars(ctx, exec, libraryID)
+		return !hasMax, err
+	default:
+		return false, fmt.Errorf("unsupported position: %s", pos)
+	}
+}
+
+func (r *libraryRepository) UpdateLibraryEmployeePosition(ctx context.Context, exec GormExecutor, libraryID, memberID int, oldPos, newPos models.Position) error {
+	query := `
+		UPDATE library_employees
+		SET position = $1
+		WHERE library_id = $2 AND member_id = $3 AND position = $4;
+	`
+	_, err := exec.ExecContext(ctx, query, newPos, libraryID, memberID, oldPos)
+	return err
 }

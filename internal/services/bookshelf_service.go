@@ -45,8 +45,12 @@ func (s *bookshelfService) CreateBookshelf(ctx context.Context, shelf *models.Bo
 		return fmt.Errorf("library branch not found: %w", err)
 	}
 
+	code, err := s.bookshelfRepo.GetNextBookshelfCode(ctx, s.db)
+	if err != nil {
+		return err
+	}
 	// 2. Create the shelf (Repository sets initial empty_space = capacity)
-	return s.bookshelfRepo.Create(ctx, s.db, shelf)
+	return s.bookshelfRepo.Create(ctx, s.db, shelf, code)
 }
 
 // GetBookshelfByID retrieves a single bookshelf

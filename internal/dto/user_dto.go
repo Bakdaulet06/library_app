@@ -3,16 +3,11 @@ package dto
 import (
 	"errors"
 	"library/internal/models"
+	"net/mail"
 	"strings"
 )
 
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role,omitempty"` // Default to "client" if empty
-}
-
-type RegisterClientAndLoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
@@ -28,35 +23,28 @@ type UpdateClientProfile struct {
 	NewPassword string `json:"new_password"`
 }
 
-func (r RegisterRequest) Validate() error {
-	if strings.TrimSpace(r.Email) == "" {
-		return errors.New("email is required")
-	}
-	if len(r.Password) < 8 {
-		return errors.New("password must be at least 8 characters long")
-	}
-	if r.Role != "" && r.Role != "client" && r.Role != "employee" {
-		return errors.New("role must be either 'client' or 'employee'")
-	}
-	return nil
+// Helper function to validate email standard format
+func isValidEmail(email string) bool {
+	_, err := mail.ParseAddress(strings.TrimSpace(email))
+	return err == nil
 }
 
-func (r RegisterClientAndLoginRequest) Validate() error {
-	if strings.TrimSpace(r.Email) == "" {
-		return errors.New("email is required")
+func (r RegisterRequest) Validate() error {
+	if !isValidEmail(r.Email) {
+		return errors.New("invalid email address")
 	}
-	if len(r.Password) < 8 {
-		return errors.New("password must be at least 8 characters long")
+	if len(r.Password) <= 8 {
+		return errors.New("password must be over 8 characters long")
 	}
 	return nil
 }
 
 func (r UpdateClientProfile) Validate() error {
-	if strings.TrimSpace(r.Email) == "" {
-		return errors.New("email is required")
+	if !isValidEmail(r.Email) {
+		return errors.New("invalid email address")
 	}
-	if r.OldPassword == "" || r.NewPassword == "" {
-		return errors.New("password can't be empty")
+	if len(r.OldPassword) <= 8 || len(r.NewPassword) <= 8 {
+		return errors.New("passwords must be over 8 characters long")
 	}
 	return nil
 }

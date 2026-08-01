@@ -1,0 +1,2 @@
+ALTER TABLE members 
+ALTER COLUMN role SET DEFAULT 'client';

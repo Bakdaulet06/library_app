@@ -42,7 +42,6 @@ func (h *BookshelfHandler) CreateBookshelf(w http.ResponseWriter, r *http.Reques
 
 	shelf := &models.Bookshelf{
 		LibraryID: libraryID,
-		Code:      req.Code,
 		Capacity:  req.Capacity,
 	}
 

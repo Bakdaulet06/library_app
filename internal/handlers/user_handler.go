@@ -29,7 +29,7 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.userService.Register(r.Context(), req)
+	authRes, err := h.userService.Register(r.Context(), req)
 	if err != nil {
 		// Handle duplicate email or validation errors
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusBadRequest)
@@ -38,36 +38,12 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
-}
-
-func (h *UserHandler) RegisterClient(w http.ResponseWriter, r *http.Request) {
-	var req dto.RegisterClientAndLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	if req.Email == "" || req.Password == "" {
-		http.Error(w, `{"error": "email and password are required"}`, http.StatusBadRequest)
-		return
-	}
-
-	user, err := h.userService.RegisterClient(r.Context(), req)
-	if err != nil {
-		// Handle duplicate email or validation errors
-		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(authRes)
 }
 
 // POST /api/login
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req dto.RegisterClientAndLoginRequest
+	var req dto.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "invalid request body"}`, http.StatusBadRequest)
 		return

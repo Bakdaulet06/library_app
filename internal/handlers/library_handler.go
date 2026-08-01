@@ -28,6 +28,12 @@ func (h *LibraryHandler) RegisterLibrary(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if err := req.Validate(); err != nil {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
 	library, err := h.libraryService.RegisterLibrary(r.Context(), req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

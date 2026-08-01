@@ -114,8 +114,8 @@ func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor) ([]mode
 }
 
 func (r *bookRepository) Update(ctx context.Context, exec GormExecutor, b *models.Book) error {
-	query := `UPDATE books SET title = $1, author = $2, isbn = $3, genre_id = $4 WHERE id = $5`
-	res, err := exec.ExecContext(ctx, query, b.Title, b.Author, b.Isbn, b.GenreID, b.ID)
+	query := `UPDATE books SET title = $1, author = $2, isbn = $3, genre_id = $4, price = $5 WHERE id = $5`
+	res, err := exec.ExecContext(ctx, query, b.Title, b.Author, b.Isbn, b.GenreID, b.Price, b.ID)
 	if err != nil {
 		return err
 	}

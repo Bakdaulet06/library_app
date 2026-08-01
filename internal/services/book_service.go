@@ -46,7 +46,8 @@ func (s *bookService) CreateBook(ctx context.Context, req dto.CreateBookRequest)
 		Title:   req.Title,
 		Author:  req.Author,
 		Isbn:    req.Isbn,
-		GenreID: *req.GenreID,
+		GenreID: req.GenreID,
+		Price:   req.Price,
 	}
 
 	if err := s.bookRepo.Create(ctx, s.db, book); err != nil {
@@ -96,7 +97,8 @@ func (s *bookService) UpdateBook(ctx context.Context, id int, req dto.CreateBook
 	book.Title = req.Title
 	book.Author = req.Author
 	book.Isbn = req.Isbn
-	book.GenreID = *req.GenreID
+	book.GenreID = req.GenreID
+	book.Price = req.Price
 
 	if err := s.bookRepo.Update(ctx, s.db, book); err != nil {
 		return nil, err

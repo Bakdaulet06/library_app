@@ -49,7 +49,7 @@ func (h *MemberHandler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid member ID"}`, http.StatusBadRequest)
 		return
 	}
-	var req dto.RegisterClientAndLoginRequest
+	var req dto.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "malformed json request payload structure"})
