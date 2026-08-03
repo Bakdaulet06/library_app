@@ -191,6 +191,11 @@ func (h *LibraryHandler) GetLibraryLoans(w http.ResponseWriter, r *http.Request)
 }
 
 // Transactional Action endpoints
+// for request we send for much time user want to loan the book, starting from 7 days till 21 days,
+type borrowBookRequest struct {
+	BorrowDays int `json:"borrow_days"`
+}
+
 func (h *LibraryHandler) BorrowBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	idStr := r.PathValue("id")
@@ -205,6 +210,14 @@ func (h *LibraryHandler) BorrowBook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid book ID"}`, http.StatusBadRequest)
 		return
 	}
+
+	var req borrowBookRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
+		return
+	}
+
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok || user == nil {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -212,7 +225,7 @@ func (h *LibraryHandler) BorrowBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.libraryService.BorrowBook(r.Context(), user.ID, libraryID, bookID); err != nil {
+	if err := h.libraryService.BorrowBook(r.Context(), user.ID, libraryID, bookID, req.BorrowDays); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return

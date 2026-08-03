@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"library/internal/dto"
 	"library/internal/geocoder"
@@ -22,7 +23,7 @@ type LibraryService interface {
 	UpdateLibrary(ctx context.Context, id int, req dto.CreateLibraryRequest) (*models.Library, error)
 	DeleteLibrary(ctx context.Context, id int) error
 
-	BorrowBook(ctx context.Context, memberID, libraryID, bookID int) error
+	BorrowBook(ctx context.Context, memberID, libraryID, bookID, borrowDays int) error
 	ReturnBook(ctx context.Context, libraryID, memberID, bookID int) error
 	AssignShelf(ctx context.Context, libraryID, bookID int) (*models.Bookshelf, error)
 	ListReturnedBooks(ctx context.Context, libraryID int) ([]models.ReturnedBook, error)
@@ -36,6 +37,7 @@ type libraryService struct {
 	bookInventoryRepo repositories.BookInventoryRepository
 	bookshelfRepo     repositories.BookshelfRepository
 	geocoder          geocoder.Geocoder
+	profileRepo       repositories.ProfileRepository
 }
 
 func NewLibraryService(
@@ -46,6 +48,7 @@ func NewLibraryService(
 	bookInventoryRepo repositories.BookInventoryRepository,
 	bookshelfRepo repositories.BookshelfRepository,
 	geocoder geocoder.Geocoder,
+	profileRepo repositories.ProfileRepository,
 ) LibraryService {
 	return &libraryService{
 		db:                db,
@@ -55,6 +58,7 @@ func NewLibraryService(
 		bookInventoryRepo: bookInventoryRepo,
 		bookshelfRepo:     bookshelfRepo,
 		geocoder:          geocoder,
+		profileRepo:       profileRepo,
 	}
 }
 
@@ -204,7 +208,11 @@ func (s *libraryService) GetLibraryBooks(ctx context.Context, libraryID int, p p
 }
 
 // --- 1. BorrowBook ---
-func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bookID int) error {
+func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bookID, borrowDays int) error {
+	if err := models.ValidateLoanDays(borrowDays); err != nil {
+		return err
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -220,16 +228,25 @@ func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bo
 		return errors.New("checkout blocked: targeted member record does not exist")
 	}
 
-	// 2. Verify Book Exists in shelves of library
+	// 2. Verify member has a card and it's not already in the red
+	card, err := s.profileRepo.GetCardByUserID(ctx, tx, memberID)
+	if err != nil {
+		return fmt.Errorf("checkout blocked: could not verify member card: %w", err)
+	}
+	if card.Amount < 0 {
+		return errors.New("checkout blocked: member's card balance is negative")
+	}
+
+	// 3. Verify Book Exists in shelves of library
 	shelfAllocations, err := s.bookInventoryRepo.GetShelfAllocationsByBook(ctx, tx, libraryID, bookID)
 	if err != nil {
 		return fmt.Errorf("failed to check book shelf locations: %w", err)
 	}
 	if len(shelfAllocations) == 0 {
-		return errors.New("There's no such book in the library")
+		return errors.New("there's no such book in the library")
 	}
 
-	// 3. Verify Active Loan
+	// 4. Verify Active Loan
 	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, bookID, memberID)
 	if err != nil {
 		return fmt.Errorf("database error checking active loans: %w", err)
@@ -243,7 +260,8 @@ func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bo
 		LibraryID:   libraryID,
 		BookshelfID: shelfAllocations[0].BookshelfID,
 	}
-	// 5. Decrement Stock in `book_inventory`
+
+	// 5. Decrement Stock
 	if err := s.bookInventoryRepo.DecrementInventory(ctx, tx, bookLocation); err != nil {
 		return fmt.Errorf("failed to decrement inventory: %w", err)
 	}
@@ -253,7 +271,7 @@ func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bo
 	}
 
 	// 6. Register Loan Record
-	if err := s.bookRepo.CreateLoan(ctx, tx, bookID, memberID, libraryID); err != nil {
+	if err := s.bookRepo.CreateLoan(ctx, tx, bookID, memberID, libraryID, borrowDays); err != nil {
 		return fmt.Errorf("failed to register loan log: %w", err)
 	}
 
@@ -261,6 +279,9 @@ func (s *libraryService) BorrowBook(ctx context.Context, memberID, libraryID, bo
 }
 
 // --- 2. ReturnBook ---
+// when returning i want to check if user returned their book on time, if they did then we do nothing, but if they returned their book late
+// then we have to fine them probably like 1/40 part of the price of the book for one day that wasn't returned, we can fine them
+// even if their card has not enough money, their card will go negative,
 func (s *libraryService) ReturnBook(ctx context.Context, libraryID, memberID, bookID int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -276,16 +297,29 @@ func (s *libraryService) ReturnBook(ctx context.Context, libraryID, memberID, bo
 		return errors.New("return blocked: target catalog book no longer exists")
 	}
 
-	hasLoan, err := s.bookRepo.HasActiveLoan(ctx, tx, bookID, memberID)
+	loan, err := s.bookRepo.GetActiveLoan(ctx, tx, bookID, memberID)
 	if err != nil {
 		return fmt.Errorf("database error checking active loan: %w", err)
 	}
-	if !hasLoan {
+	if loan == nil {
 		return errors.New("return blocked: no active loan found for this member and book")
 	}
 
+	returnedAt := time.Now()
+
 	if err := s.bookRepo.UpdateLoanReturn(ctx, tx, bookID, memberID, libraryID); err != nil {
 		return fmt.Errorf("failed to update loan record: %w", err)
+	}
+
+	// Fine the member if the book came back late. Capped at the book's price.
+	if fine := loan.CalculateFine(returnedAt, book.Price); fine > 0 {
+		card, err := s.profileRepo.GetCardByUserID(ctx, tx, memberID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch card for fine: %w", err)
+		}
+		if err := s.profileRepo.UpdateCardBalance(ctx, tx, card.ID, -fine); err != nil {
+			return fmt.Errorf("failed to apply late fine: %w", err)
+		}
 	}
 
 	// Queue for employee shelf assignment instead of incrementing inventory directly.

@@ -17,6 +17,7 @@ type ProfileRepository interface {
 	GetCardByUserID(ctx context.Context, exec GormExecutor, userID int) (*models.Card, error)
 	CreateCard(ctx context.Context, exec GormExecutor, userID int) (*models.Card, error)
 	UpdateCardAmountWithTx(ctx context.Context, tx *sql.Tx, userID int, amountChange float64) (*models.Card, error)
+	UpdateCardBalance(ctx context.Context, exec GormExecutor, cardID int, delta float64) error
 }
 
 type profileRepository struct{}
@@ -206,4 +207,15 @@ func (r *profileRepository) UpdateCardAmountWithTx(ctx context.Context, tx *sql.
 	}
 
 	return updatedCard, nil
+}
+
+// UpdateCardBalance adjusts a card's balance by delta (can be negative).
+// Balance is allowed to go below zero.
+func (r *profileRepository) UpdateCardBalance(ctx context.Context, exec GormExecutor, cardID int, delta float64) error {
+	query := `UPDATE cards SET amount = amount + $1 WHERE id = $2`
+	_, err := exec.ExecContext(ctx, query, delta, cardID)
+	if err != nil {
+		return fmt.Errorf("failed to update card balance: %w", err)
+	}
+	return nil
 }

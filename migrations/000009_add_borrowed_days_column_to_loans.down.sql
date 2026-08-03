@@ -1,0 +1,2 @@
+ALTER TABLE loans 
+DROP COLUMN IF EXISTS borrowed_days;

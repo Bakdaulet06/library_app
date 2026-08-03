@@ -28,7 +28,7 @@ type BookRepository interface {
 
 	// Transactional & Borrowing State Assertions
 	HasActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int) (bool, error)
-	CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID, borrowed_library_id int) error
+	CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID, borrowed_library_id, borrowed_days int) error
 	UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID, returned_library_id int) error
 	ListLoans(ctx context.Context, exec GormExecutor) ([]models.Loan, error)
 	GetLoansByMemberID(ctx context.Context, exec GormExecutor, memberID int) ([]models.Loan, error)
@@ -37,6 +37,8 @@ type BookRepository interface {
 	GetReturnedBooksByLibrary(ctx context.Context, exec GormExecutor, libraryID int) ([]models.ReturnedBook, error)
 	GetReturnedBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) (*models.ReturnedBook, error)
 	DeleteReturnedBook(ctx context.Context, exec GormExecutor, id int) error
+
+	GetActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int) (*models.Loan, error)
 }
 
 type bookRepository struct{}
@@ -178,21 +180,19 @@ func (r *bookRepository) HasActiveLoan(ctx context.Context, exec GormExecutor, b
 	return exists, err
 }
 
-func (r *bookRepository) CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID, borrowedLibraryID int) error {
+func (r *bookRepository) CreateLoan(ctx context.Context, exec GormExecutor, bookID, memberID, borrowedLibraryID, borrowedDays int) error {
 	query := `
-        INSERT INTO loans (book_id, member_id, borrowed_library_id, borrowed_at) 
-        VALUES ($1, $2, $3, NOW())`
+        INSERT INTO loans (book_id, member_id, borrowed_library_id, borrowed_at, borrowed_days) 
+        VALUES ($1, $2, $3, NOW(), $4)`
 
-	_, err := exec.ExecContext(ctx, query, bookID, memberID, borrowedLibraryID)
+	_, err := exec.ExecContext(ctx, query, bookID, memberID, borrowedLibraryID, borrowedDays)
 	if err != nil {
 		return fmt.Errorf("failed to insert loan record: %w", err)
 	}
-
 	return nil
 }
 
 func (r *bookRepository) UpdateLoanReturn(ctx context.Context, exec GormExecutor, bookID, memberID, returnedLibraryID int) error {
-	// Updates the return timestamp and records which library branch received the book
 	query := `
         UPDATE loans 
         SET returned_at = NOW(), returned_library_id = $1 
@@ -207,11 +207,9 @@ func (r *bookRepository) UpdateLoanReturn(ctx context.Context, exec GormExecutor
 	if err != nil {
 		return err
 	}
-
 	if rows == 0 {
 		return errors.New("no matching active loan record found for this member and book combination")
 	}
-
 	return nil
 }
 
@@ -365,4 +363,23 @@ func (r *bookRepository) DeleteReturnedBook(ctx context.Context, exec GormExecut
 		return fmt.Errorf("failed to delete returned book record: %w", err)
 	}
 	return nil
+}
+
+func (r *bookRepository) GetActiveLoan(ctx context.Context, exec GormExecutor, bookID, memberID int) (*models.Loan, error) {
+	query := `
+        SELECT id, book_id, member_id, borrowed_library_id, borrowed_at, borrowed_days
+        FROM loans
+        WHERE book_id = $1 AND member_id = $2 AND returned_at IS NULL`
+
+	loan := &models.Loan{}
+	err := exec.QueryRowContext(ctx, query, bookID, memberID).Scan(
+		&loan.ID, &loan.BookID, &loan.MemberID, &loan.BorrowedLibraryID, &loan.BorrowedAt, &loan.BorrowedDays,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to fetch active loan: %w", err)
+	}
+	return loan, nil
 }
