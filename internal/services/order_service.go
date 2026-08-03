@@ -8,6 +8,7 @@ import (
 
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 )
 
@@ -19,8 +20,8 @@ var (
 type OrderService interface {
 	BuyBooks(ctx context.Context, buyBookRequestFull dto.BuyBookRequestFull) (*BuyBookResult, error)
 	GetOrdersByMemberID(ctx context.Context, memberID int) ([]models.Order, error)
-	GetOrdersByLibraryID(ctx context.Context, libraryID int) ([]models.Order, error)
-	GetAllOrders(ctx context.Context) ([]models.Order, error)
+	GetOrdersByLibraryID(ctx context.Context, libraryID int, p params.OrderParams) ([]models.Order, error)
+	GetAllOrders(ctx context.Context, p params.OrderParams) ([]models.Order, error)
 }
 
 type orderService struct {
@@ -156,10 +157,10 @@ func (s *orderService) GetOrdersByMemberID(ctx context.Context, memberID int) ([
 	return s.orderRepo.GetOrdersByMemberID(ctx, s.db, memberID)
 }
 
-func (s *orderService) GetOrdersByLibraryID(ctx context.Context, libraryID int) ([]models.Order, error) {
-	return s.orderRepo.GetOrdersByLibraryID(ctx, s.db, libraryID)
+func (s *orderService) GetOrdersByLibraryID(ctx context.Context, libraryID int, p params.OrderParams) ([]models.Order, error) {
+	return s.orderRepo.GetOrdersByLibraryID(ctx, s.db, libraryID, p)
 }
 
-func (s *orderService) GetAllOrders(ctx context.Context) ([]models.Order, error) {
-	return s.orderRepo.GetAllOrders(ctx, s.db)
+func (s *orderService) GetAllOrders(ctx context.Context, p params.OrderParams) ([]models.Order, error) {
+	return s.orderRepo.GetAllOrders(ctx, s.db, p)
 }

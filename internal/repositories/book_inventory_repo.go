@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"library/internal/models"
+	"library/internal/params"
+	"strconv"
+	"strings"
 )
 
 type BookInventoryRepository interface {
 	GetAvailableCopies(ctx context.Context, exec GormExecutor, book_id, library_Id int) (*int, error)
 	AddCopies(ctx context.Context, exec GormExecutor, inv *models.BookInventory) (*models.BookInventory, error)
-	List(ctx context.Context, exec GormExecutor) ([]models.BookInventory, error)
+	List(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.BookInventory, error)
 	Delete(ctx context.Context, exec GormExecutor, libraryId, bookId int) error
 
 	DecrementInventory(ctx context.Context, exec GormExecutor, bookLocation models.BookLocation) error
@@ -77,20 +80,65 @@ func (r *bookInventoryRepository) AddCopies(ctx context.Context, exec GormExecut
 
 // --- 2. List ---
 // Fetches all inventory stock records across all libraries
-func (r *bookInventoryRepository) List(ctx context.Context, exec GormExecutor) ([]models.BookInventory, error) {
+func (r *bookInventoryRepository) List(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.BookInventory, error) {
 	query := `
 		SELECT library_id, book_id, bookshelf_id, available_copies 
-		FROM book_inventory 
-		ORDER BY library_id, book_id`
+		FROM book_inventory`
 
-	rows, err := exec.QueryContext(ctx, query)
+	var whereClauses []string
+	var args []interface{}
+	paramIdx := 1
+
+	// 1. Search filter: If search is numeric, search against IDs
+	if p.Search != "" {
+		if idSearch, err := strconv.Atoi(p.Search); err == nil {
+			whereClauses = append(whereClauses, fmt.Sprintf("(library_id = $%d OR book_id = $%d OR bookshelf_id = $%d)", paramIdx, paramIdx+1, paramIdx+2))
+			args = append(args, idSearch, idSearch, idSearch)
+			paramIdx += 3
+		}
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// 2. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"library_id":       "library_id",
+		"book_id":          "book_id",
+		"bookshelf_id":     "bookshelf_id",
+		"available_copies": "available_copies",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "library_id, book_id" // Default multi-column sorting
+	}
+
+	order := strings.ToUpper(p.Order)
+	if order != "DESC" {
+		order = "ASC" // Default ordering direction
+	}
+
+	// Format ORDER BY safely
+	if sortColumn == "library_id, book_id" {
+		query += fmt.Sprintf(" ORDER BY library_id %s, book_id %s", order, order)
+	} else {
+		query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+	}
+
+	// 3. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query book inventory: %w", err)
 	}
 	defer rows.Close()
 
 	var inventory []models.BookInventory
-
 	for rows.Next() {
 		var item models.BookInventory
 		if err := rows.Scan(&item.LibraryID, &item.BookID, &item.BookshelfID, &item.AvailableCopies); err != nil {

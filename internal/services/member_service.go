@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 
 	"golang.org/x/crypto/bcrypt"
@@ -14,7 +15,7 @@ import (
 
 type MemberService interface {
 	GetMemberByID(ctx context.Context, id int) (*models.BookMember, error)
-	ListMembers(ctx context.Context) ([]models.BookMember, error)
+	ListMembers(ctx context.Context, p params.Pagination) ([]models.BookMember, error)
 	UpdateMember(ctx context.Context, id int, req dto.RegisterRequest) (*models.BookMember, error)
 	DeleteMember(ctx context.Context, id int) error
 	GetMemberLoans(ctx context.Context, memberID int) ([]models.Loan, error)
@@ -41,8 +42,17 @@ func (s *memberService) GetMemberByID(ctx context.Context, id int) (*models.Book
 	return member, nil
 }
 
-func (s *memberService) ListMembers(ctx context.Context) ([]models.BookMember, error) {
-	return s.memberRepo.List(ctx, s.db)
+func (s *memberService) ListMembers(ctx context.Context, p params.Pagination) ([]models.BookMember, error) {
+	members, err := s.memberRepo.List(ctx, s.db, p)
+	if err != nil {
+		return nil, err
+	}
+
+	if members == nil {
+		return []models.BookMember{}, nil
+	}
+
+	return members, nil
 }
 
 func (s *memberService) UpdateMember(ctx context.Context, id int, req dto.RegisterRequest) (*models.BookMember, error) {

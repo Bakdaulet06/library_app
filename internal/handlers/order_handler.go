@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"library/internal/dto"
+	"library/internal/models"
+	"library/internal/params"
 	"library/internal/services"
 
 	// TODO: replace with wherever your auth middleware actually lives -
@@ -127,9 +129,7 @@ func (h *OrderHandler) ListOrdersOfSpecificClient(w http.ResponseWriter, r *http
 func (h *OrderHandler) ListOrdersByLibrary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	// 1. Extract library_id from URL path or query params
-	// If using Go 1.22 standard mux path value: libraryIDStr := r.PathValue("library_id")
-	// Or via URL query parameter: r.URL.Query().Get("library_id")
+	// 1. Extract library_id
 	libraryIDStr := r.PathValue("id")
 	if libraryIDStr == "" {
 		libraryIDStr = r.URL.Query().Get("id")
@@ -141,16 +141,23 @@ func (h *OrderHandler) ListOrdersByLibrary(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// 2. Fetch library orders via service
-	orders, err := h.orderService.GetOrdersByLibraryID(r.Context(), libraryID)
+	// 2. Extract pagination & order parameters
+	p := params.OrderParamsFromRequest(r)
+
+	// 3. Fetch library orders via service
+	orders, err := h.orderService.GetOrdersByLibraryID(r.Context(), libraryID, p)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
+	if orders == nil {
+		orders = []models.Order{}
+	}
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(orders)
+	_ = json.NewEncoder(w).Encode(orders)
 }
 
 // GET /orders
@@ -158,13 +165,20 @@ func (h *OrderHandler) ListOrdersByLibrary(w http.ResponseWriter, r *http.Reques
 func (h *OrderHandler) ListAllOrders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	orders, err := h.orderService.GetAllOrders(r.Context())
+	// Parse query params (limit, offset, sort_by, order, q, member_id)
+	p := params.OrderParamsFromRequest(r)
+
+	orders, err := h.orderService.GetAllOrders(r.Context(), p)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
+	if orders == nil {
+		orders = []models.Order{}
+	}
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(orders)
+	_ = json.NewEncoder(w).Encode(orders)
 }

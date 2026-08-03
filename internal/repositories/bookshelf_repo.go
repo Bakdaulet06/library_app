@@ -5,16 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 )
 
 type BookshelfRepository interface {
 	Create(ctx context.Context, exec GormExecutor, shelf *models.Bookshelf, code string) error
 	GetByID(ctx context.Context, exec GormExecutor, libraryID, shelfID int) (*models.Bookshelf, error)
-	GetByLibraryID(ctx context.Context, exec GormExecutor, libraryID int) ([]models.Bookshelf, error)
-	GetBooksByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID int) ([]dto.BookWithShelfStockResponse, error)
+	GetByLibraryID(ctx context.Context, exec GormExecutor, p params.BookshelfParams) ([]models.Bookshelf, error)
+	GetBooksByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID int, p params.Pagination) ([]dto.BookWithShelfStockResponse, error)
 	GetBookByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID, bookID int) (*dto.BookWithShelfStockResponse, error)
 	UpdateEmptySpace(ctx context.Context, exec GormExecutor, libraryID, shelfID int, spaceDelta int) error
 	Delete(ctx context.Context, exec GormExecutor, libraryID, shelfID int) error
@@ -74,15 +76,51 @@ func (r *bookshelfRepository) GetByID(ctx context.Context, exec GormExecutor, li
 	return &shelf, nil
 }
 
-// GetByLibraryID lists all bookshelves available inside a specific library branch.
-func (r *bookshelfRepository) GetByLibraryID(ctx context.Context, exec GormExecutor, libraryID int) ([]models.Bookshelf, error) {
+// GetByLibraryID queries PostgreSQL dynamically with pagination, sorting, and code filtering
+func (r *bookshelfRepository) GetByLibraryID(ctx context.Context, exec GormExecutor, p params.BookshelfParams) ([]models.Bookshelf, error) {
 	query := `
 		SELECT id, library_id, code, capacity, empty_space, created_at
 		FROM bookshelves
 		WHERE library_id = $1
-		ORDER BY code ASC
 	`
-	rows, err := exec.QueryContext(ctx, query, libraryID)
+
+	args := []interface{}{p.LibraryID}
+	paramIdx := 2 // $1 is reserved for library_id
+
+	// 1. Search by Code (Case-insensitive ILIKE for Postgres)
+	if p.Search != "" {
+		query += fmt.Sprintf(" AND code ILIKE $%d", paramIdx)
+		args = append(args, "%"+p.Search+"%")
+		paramIdx++
+	}
+
+	// 2. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"id":          "id",
+		"code":        "code",
+		"capacity":    "capacity",
+		"empty_space": "empty_space",
+		"created_at":  "created_at",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "code" // Default sorting column
+	}
+
+	order := strings.ToUpper(p.Order)
+	if order != "DESC" {
+		order = "ASC" // Default order direction
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+
+	// 3. Limit & Offset (Postgres positional arguments)
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query bookshelves: %w", err)
 	}
@@ -112,7 +150,7 @@ func (r *bookshelfRepository) GetByLibraryID(ctx context.Context, exec GormExecu
 	return shelves, nil
 }
 
-func (r *bookshelfRepository) GetBooksByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID int) ([]dto.BookWithShelfStockResponse, error) {
+func (r *bookshelfRepository) GetBooksByShelfID(ctx context.Context, exec GormExecutor, libraryID, shelfID int, p params.Pagination) ([]dto.BookWithShelfStockResponse, error) {
 	query := `
 		SELECT 
 			b.id AS book_id,
@@ -126,7 +164,44 @@ func (r *bookshelfRepository) GetBooksByShelfID(ctx context.Context, exec GormEx
 		WHERE bi.library_id = $1 AND bi.bookshelf_id = $2
 	`
 
-	rows, err := exec.QueryContext(ctx, query, libraryID, shelfID)
+	args := []interface{}{libraryID, shelfID}
+	paramIdx := 3 // $1 and $2 are reserved for libraryID and shelfID
+
+	// 1. Search by title, author, or ISBN
+	if p.Search != "" {
+		searchTerm := "%" + p.Search + "%"
+		query += fmt.Sprintf(" AND (b.title ILIKE $%d OR b.author ILIKE $%d OR b.isbn ILIKE $%d)", paramIdx, paramIdx+1, paramIdx+2)
+		args = append(args, searchTerm, searchTerm, searchTerm)
+		paramIdx += 3
+	}
+
+	// 2. Allowlist Sorting
+	allowedColumns := map[string]string{
+		"id":               "b.id",
+		"title":            "b.title",
+		"author":           "b.author",
+		"isbn":             "b.isbn",
+		"available_copies": "bi.available_copies",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "b.id" // Default sort column
+	}
+
+	order := strings.ToUpper(p.Order)
+	if order != "DESC" {
+		order = "ASC"
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+
+	// 3. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +210,14 @@ func (r *bookshelfRepository) GetBooksByShelfID(ctx context.Context, exec GormEx
 	var results []dto.BookWithShelfStockResponse
 	for rows.Next() {
 		var item dto.BookWithShelfStockResponse
-		if err := rows.Scan(&item.BookID, &item.Title, &item.Author, &item.ISBN, &item.GenreID, &item.AvailableCopies); err != nil {
+		if err := rows.Scan(
+			&item.BookID,
+			&item.Title,
+			&item.Author,
+			&item.ISBN,
+			&item.GenreID,
+			&item.AvailableCopies,
+		); err != nil {
 			return nil, err
 		}
 		results = append(results, item)

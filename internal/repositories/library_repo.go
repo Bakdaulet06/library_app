@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"library/internal/models"
+	"library/internal/params"
+	"strings"
 )
 
 type LibraryRepository interface {
 	Create(ctx context.Context, exec GormExecutor, m *models.Library) error
-	ListAll(ctx context.Context, exec GormExecutor) ([]models.Library, error)
-	ListAllBooks(ctx context.Context, exec GormExecutor, id int) ([]models.LibraryBook, error)
+	ListAll(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Library, error)
+	ListAllBooks(ctx context.Context, exec GormExecutor, id int, p params.BookParams) ([]models.LibraryBook, error)
 	ListAllLoans(ctx context.Context, exec GormExecutor, id int) ([]models.Loan, error)
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 	Update(ctx context.Context, exec GormExecutor, m *models.Library) error
@@ -74,9 +76,51 @@ func (r *libraryRepository) Delete(ctx context.Context, exec GormExecutor, id in
 	return err
 }
 
-func (r *libraryRepository) ListAll(ctx context.Context, exec GormExecutor) ([]models.Library, error) {
-	query := `SELECT id, name, address, created_at FROM libraries ORDER BY id ASC`
-	rows, err := exec.QueryContext(ctx, query)
+func (r *libraryRepository) ListAll(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Library, error) {
+	query := `SELECT id, name, address, created_at FROM libraries`
+
+	var whereClauses []string
+	var args []interface{}
+	paramIdx := 1
+
+	// 1. Search by Name or Address (Case-insensitive ILIKE for Postgres)
+	if p.Search != "" {
+		searchTerm := "%" + p.Search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(name ILIKE $%d OR address ILIKE $%d)", paramIdx, paramIdx+1))
+		args = append(args, searchTerm, searchTerm)
+		paramIdx += 2
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// 2. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"id":         "id",
+		"name":       "name",
+		"address":    "address",
+		"created_at": "created_at",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "id" // Default sort column
+	}
+
+	order := strings.ToUpper(p.Order)
+	if order != "DESC" {
+		order = "ASC" // Default order direction
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+
+	// 3. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -90,31 +134,89 @@ func (r *libraryRepository) ListAll(ctx context.Context, exec GormExecutor) ([]m
 		}
 		libraries = append(libraries, m)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return libraries, nil
 }
 
-func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor, libraryID int) ([]models.LibraryBook, error) {
+func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor, libraryID int, p params.BookParams) ([]models.LibraryBook, error) {
 	query := `
 		SELECT 
 			b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at,
 			SUM(bi.available_copies) AS total_available_copies
 		FROM books b
 		INNER JOIN book_inventory bi ON b.id = bi.book_id
-		WHERE bi.library_id = $1
-		GROUP BY b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at
-		ORDER BY b.id`
+		WHERE bi.library_id = $1`
 
-	rows, err := exec.QueryContext(ctx, query, libraryID)
+	args := []interface{}{libraryID}
+	paramIdx := 2 // $1 is reserved for libraryID
+
+	// 1. Optional Genre Filtering
+	if p.GenreID > 0 {
+		query += fmt.Sprintf(" AND b.genre_id = $%d", paramIdx)
+		args = append(args, p.GenreID)
+		paramIdx++
+	}
+
+	// 2. Optional Search Filtering (Title, Author, or ISBN)
+	if p.Search != "" {
+		searchTerm := "%" + p.Search + "%"
+		query += fmt.Sprintf(" AND (b.title ILIKE $%d OR b.author ILIKE $%d OR b.isbn ILIKE $%d)", paramIdx, paramIdx+1, paramIdx+2)
+		args = append(args, searchTerm, searchTerm, searchTerm)
+		paramIdx += 3
+	}
+
+	// 3. Group By
+	query += ` GROUP BY b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at`
+
+	// 4. Allowlist Sorting Columns
+	allowedColumns := map[string]string{
+		"id":                     "b.id",
+		"title":                  "b.title",
+		"author":                 "b.author",
+		"isbn":                   "b.isbn",
+		"created_at":             "b.created_at",
+		"total_available_copies": "total_available_copies",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "b.id" // Default sorting column
+	}
+
+	order := strings.ToUpper(p.Order)
+	if order != "DESC" {
+		order = "ASC" // Default ordering direction
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+
+	// 5. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 6. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query books for library %d: %w", libraryID, err)
 	}
 	defer rows.Close()
 
 	var libraryBooks []models.LibraryBook
-
 	for rows.Next() {
 		var b models.LibraryBook
-		if err := rows.Scan(&b.Book.ID, &b.Book.Title, &b.Book.Author, &b.Book.Isbn, &b.Book.GenreID, &b.Book.CreatedAt, &b.TotalAvailableCopies); err != nil {
+		if err := rows.Scan(
+			&b.Book.ID,
+			&b.Book.Title,
+			&b.Book.Author,
+			&b.Book.Isbn,
+			&b.Book.GenreID,
+			&b.Book.CreatedAt,
+			&b.TotalAvailableCopies,
+		); err != nil {
 			return nil, fmt.Errorf("failed to scan book row: %w", err)
 		}
 		libraryBooks = append(libraryBooks, b)
@@ -125,7 +227,7 @@ func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor,
 	}
 
 	if libraryBooks == nil {
-		return []models.LibraryBook{}, nil // Return empty slice instead of nil
+		return []models.LibraryBook{}, nil
 	}
 
 	return libraryBooks, nil

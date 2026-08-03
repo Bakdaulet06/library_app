@@ -9,6 +9,7 @@ import (
 	"library/internal/dto"
 	"library/internal/geocoder"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 )
 
@@ -16,9 +17,8 @@ type LibraryService interface {
 	RegisterLibrary(ctx context.Context, req dto.CreateLibraryRequest) (*models.Library, error)
 	GetLibraryByID(ctx context.Context, id int) (*models.Library, error)
 	GetLibraryLoans(ctx context.Context, id int) ([]models.Loan, error)
-	GetLibraryBooks(ctx context.Context, id int) ([]models.LibraryBook, error)
-	GetLibraryBooksByGenre(ctx context.Context, libraryID, genreID int) ([]models.Book, error)
-	ListLibraries(ctx context.Context) ([]models.Library, error)
+	GetLibraryBooks(ctx context.Context, id int, p params.BookParams) ([]models.LibraryBook, error)
+	ListLibraries(ctx context.Context, p params.Pagination) ([]models.Library, error)
 	UpdateLibrary(ctx context.Context, id int, req dto.CreateLibraryRequest) (*models.Library, error)
 	DeleteLibrary(ctx context.Context, id int) error
 
@@ -100,14 +100,14 @@ func (s *libraryService) GetLibraryByID(ctx context.Context, id int) (*models.Li
 }
 
 // 3. ListLibraries
-func (s *libraryService) ListLibraries(ctx context.Context) ([]models.Library, error) {
-	libraries, err := s.libraryRepo.ListAll(ctx, s.db)
+func (s *libraryService) ListLibraries(ctx context.Context, p params.Pagination) ([]models.Library, error) {
+	libraries, err := s.libraryRepo.ListAll(ctx, s.db, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list libraries: %w", err)
 	}
 
 	if libraries == nil {
-		return []models.Library{}, nil // Prevent returning null to HTTP JSON responses
+		return []models.Library{}, nil // Prevent returning null in HTTP JSON responses
 	}
 
 	return libraries, nil
@@ -180,9 +180,9 @@ func (s *libraryService) GetLibraryLoans(ctx context.Context, id int) ([]models.
 }
 
 // 7. GetLibraryBooks
-func (s *libraryService) GetLibraryBooks(ctx context.Context, id int) ([]models.LibraryBook, error) {
+func (s *libraryService) GetLibraryBooks(ctx context.Context, libraryID int, p params.BookParams) ([]models.LibraryBook, error) {
 	// 1. Verify library branch exists
-	library, err := s.libraryRepo.GetByID(ctx, s.db, id)
+	library, err := s.libraryRepo.GetByID(ctx, s.db, libraryID)
 	if err != nil {
 		return nil, fmt.Errorf("database error checking library: %w", err)
 	}
@@ -191,28 +191,13 @@ func (s *libraryService) GetLibraryBooks(ctx context.Context, id int) ([]models.
 	}
 
 	// 2. Fetch books stocked at this branch
-	books, err := s.libraryRepo.ListAllBooks(ctx, s.db, id)
+	books, err := s.libraryRepo.ListAllBooks(ctx, s.db, libraryID, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch library books: %w", err)
 	}
 
 	if books == nil {
 		return []models.LibraryBook{}, nil
-	}
-
-	return books, nil
-}
-
-func (s *libraryService) GetLibraryBooksByGenre(ctx context.Context, libraryID, genreID int) ([]models.Book, error) {
-	// 1. Verify library exists
-	if _, err := s.libraryRepo.GetByID(ctx, s.db, libraryID); err != nil {
-		return nil, fmt.Errorf("library not found: %w", err)
-	}
-
-	// 2. Fetch filtered books from repository
-	books, err := s.bookRepo.GetBooksByLibraryAndGenre(ctx, s.db, libraryID, genreID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve books for library %d and genre %d: %w", libraryID, genreID, err)
 	}
 
 	return books, nil

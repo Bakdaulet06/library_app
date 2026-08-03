@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"library/internal/models"
+	"library/internal/params"
 	"log"
+	"strings"
 )
 
 // GormExecutor standardizes query methods to support both standard *sql.DB pools and active *sql.Tx transactions transparently.
@@ -20,10 +22,7 @@ type BookRepository interface {
 	Create(ctx context.Context, exec GormExecutor, b *models.Book) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Book, error)
 	GetByISBN(ctx context.Context, exec GormExecutor, isbn string) (*models.Book, error)
-	GetByGenreID(ctx context.Context, exec GormExecutor, genreID int) ([]models.Book, error)
-	GetBooksByLibraryAndGenre(ctx context.Context, exec GormExecutor, libraryID, genreID int) ([]models.Book, error)
-	ListAvailable(ctx context.Context, exec GormExecutor) ([]models.Book, error)
-	ListAll(ctx context.Context, exec GormExecutor) ([]models.Book, error)
+	ListAll(ctx context.Context, exec GormExecutor, params params.BookParams) ([]models.Book, error)
 	Update(ctx context.Context, exec GormExecutor, b *models.Book) error
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 
@@ -75,9 +74,59 @@ func (r *bookRepository) GetByISBN(ctx context.Context, exec GormExecutor, isbn 
 	return &b, err
 }
 
-func (r *bookRepository) ListAvailable(ctx context.Context, exec GormExecutor) ([]models.Book, error) {
-	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books WHERE available_copies > 0 ORDER BY id ASC`
-	rows, err := exec.QueryContext(ctx, query)
+func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor, params params.BookParams) ([]models.Book, error) {
+	query := `SELECT id, title, author, isbn, genre_id, price, created_at FROM books`
+
+	var whereClauses []string
+	var args []interface{}
+	paramIdx := 1 // Postgres placeholder counter ($1, $2, etc.)
+
+	// 1. Dynamic Search / Filtering
+	if params.Search != "" {
+		searchTerm := "%" + params.Search + "%"
+		// Postgres uses $1, $2, $3...
+		whereClauses = append(whereClauses, fmt.Sprintf("(title ILIKE $%d OR author ILIKE $%d OR isbn ILIKE $%d)", paramIdx, paramIdx+1, paramIdx+2))
+		args = append(args, searchTerm, searchTerm, searchTerm)
+		paramIdx += 3
+	}
+
+	if params.GenreID > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("genre_id = $%d", paramIdx))
+		args = append(args, params.GenreID)
+		paramIdx++
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// 2. Sorting Allowlist (Safe from SQL Injection)
+	allowedColumns := map[string]string{
+		"id":         "id",
+		"title":      "title",
+		"author":     "author",
+		"created_at": "created_at",
+		"price":      "price",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(params.SortBy)]
+	if !exists {
+		sortColumn = "id"
+	}
+
+	order := strings.ToUpper(params.Order)
+	if order != "DESC" {
+		order = "ASC"
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+
+	// 3. Limit & Offset with Postgres placeholders
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, params.Limit, params.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -86,30 +135,12 @@ func (r *bookRepository) ListAvailable(ctx context.Context, exec GormExecutor) (
 	var books []models.Book
 	for rows.Next() {
 		var b models.Book
-		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.Price, &b.CreatedAt); err != nil {
 			return nil, err
 		}
 		books = append(books, b)
 	}
-	return books, nil
-}
 
-func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor) ([]models.Book, error) {
-	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books ORDER BY id ASC`
-	rows, err := exec.QueryContext(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var books []models.Book
-	for rows.Next() {
-		var b models.Book
-		if err := rows.Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt); err != nil {
-			return nil, err
-		}
-		books = append(books, b)
-	}
 	return books, nil
 }
 
@@ -267,75 +298,6 @@ func (r *bookRepository) GetLoansByMemberID(ctx context.Context, exec GormExecut
 	}
 
 	return loans, nil
-}
-
-func (r *bookRepository) GetByGenreID(ctx context.Context, exec GormExecutor, genreID int) ([]models.Book, error) {
-	query := `
-		SELECT id, title, author, isbn, genre_id, created_at
-		FROM books
-		WHERE genre_id = $1
-		ORDER BY title ASC
-	`
-
-	rows, err := exec.QueryContext(ctx, query, genreID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var books []models.Book
-	for rows.Next() {
-		var b models.Book
-		err := rows.Scan(
-			&b.ID,
-			&b.Title,
-			&b.Author,
-			&b.Isbn,
-			&b.GenreID,
-			&b.CreatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		books = append(books, b)
-	}
-
-	return books, nil
-}
-
-func (r *bookRepository) GetBooksByLibraryAndGenre(ctx context.Context, exec GormExecutor, libraryID, genreID int) ([]models.Book, error) {
-	query := `
-		SELECT b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at
-		FROM books b
-		INNER JOIN book_inventory bi ON b.id = bi.book_id
-		WHERE bi.library_id = $1 AND b.genre_id = $2 AND bi.available_copies > 0
-		ORDER BY b.title ASC
-	`
-
-	rows, err := exec.QueryContext(ctx, query, libraryID, genreID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var books []models.Book
-	for rows.Next() {
-		var b models.Book
-		err := rows.Scan(
-			&b.ID,
-			&b.Title,
-			&b.Author,
-			&b.Isbn,
-			&b.GenreID,
-			&b.CreatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		books = append(books, b)
-	}
-
-	return books, nil
 }
 
 func (r *bookRepository) CreateReturnedBook(ctx context.Context, exec GormExecutor, bookID, libraryID, memberID int) error {

@@ -8,14 +8,15 @@ import (
 
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 )
 
 type BookshelfService interface {
 	CreateBookshelf(ctx context.Context, shelf *models.Bookshelf) error
 	GetBookshelfByID(ctx context.Context, libraryID, shelfID int) (*models.Bookshelf, error)
-	GetBookshelvesByLibraryID(ctx context.Context, libraryID int) ([]models.Bookshelf, error)
-	GetBooksByShelfID(ctx context.Context, libraryID, shelfID int) ([]dto.BookWithShelfStockResponse, error)
+	GetBookshelvesByLibraryID(ctx context.Context, p params.BookshelfParams) ([]models.Bookshelf, error)
+	GetBooksByShelfID(ctx context.Context, libraryID, shelfID int, p params.Pagination) ([]dto.BookWithShelfStockResponse, error)
 	GetBookByShelfID(ctx context.Context, libraryID, shelfID, bookID int) (*dto.BookWithShelfStockResponse, error)
 	DeleteBookshelf(ctx context.Context, libraryID, shelfID int) error
 }
@@ -62,15 +63,15 @@ func (s *bookshelfService) GetBookshelfByID(ctx context.Context, libraryID, shel
 }
 
 // GetBookshelvesByLibraryID lists all bookshelves belonging to a library branch
-func (s *bookshelfService) GetBookshelvesByLibraryID(ctx context.Context, libraryID int) ([]models.Bookshelf, error) {
-	if libraryID <= 0 {
+func (s *bookshelfService) GetBookshelvesByLibraryID(ctx context.Context, p params.BookshelfParams) ([]models.Bookshelf, error) {
+	if p.LibraryID <= 0 {
 		return nil, errors.New("invalid library id")
 	}
-	return s.bookshelfRepo.GetByLibraryID(ctx, s.db, libraryID)
+	return s.bookshelfRepo.GetByLibraryID(ctx, s.db, p)
 }
 
-func (s *bookshelfService) GetBooksByShelfID(ctx context.Context, libraryID, shelfID int) ([]dto.BookWithShelfStockResponse, error) {
-	books, err := s.bookshelfRepo.GetBooksByShelfID(ctx, s.db, libraryID, shelfID)
+func (s *bookshelfService) GetBooksByShelfID(ctx context.Context, libraryID, shelfID int, p params.Pagination) ([]dto.BookWithShelfStockResponse, error) {
+	books, err := s.bookshelfRepo.GetBooksByShelfID(ctx, s.db, libraryID, shelfID, p)
 	if err != nil {
 		return nil, err
 	}

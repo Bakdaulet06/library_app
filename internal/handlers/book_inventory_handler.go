@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"library/internal/dto"
+	"library/internal/params"
 	"library/internal/services"
 )
 
@@ -40,13 +41,18 @@ func (h *BookInventoryHandler) AddInventory(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *BookInventoryHandler) ListInventory(w http.ResponseWriter, r *http.Request) {
-	inventory, err := h.inventoryService.ListBookInventory(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse query params (limit, offset, sort_by, order, q)
+	p := params.FromRequest(r)
+
+	inventory, err := h.inventoryService.ListBookInventory(r.Context(), p)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(inventory)
 }
 

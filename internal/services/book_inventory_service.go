@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 )
 
 type BookInventoryService interface {
 	AddBookInventory(ctx context.Context, req dto.CreateBookInventoryRequest) (*models.BookInventory, error)
 	GetAvailableCopies(ctx context.Context, book_id, library_Id int) (*int, error)
-	ListBookInventory(ctx context.Context) ([]models.BookInventory, error)
+	ListBookInventory(ctx context.Context, p params.Pagination) ([]models.BookInventory, error)
 	DeleteBookInventory(ctx context.Context, libraryId, bookId int) error
 }
 
@@ -115,9 +116,8 @@ func (s *bookInventoryService) GetAvailableCopies(ctx context.Context, bookID, l
 	return copies, nil
 }
 
-// --- 2. ListBookInventory ---
-func (s *bookInventoryService) ListBookInventory(ctx context.Context) ([]models.BookInventory, error) {
-	inventory, err := s.bookInventoryRepo.List(ctx, s.db)
+func (s *bookInventoryService) ListBookInventory(ctx context.Context, p params.Pagination) ([]models.BookInventory, error) {
+	inventory, err := s.bookInventoryRepo.List(ctx, s.db, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch book inventory list: %w", err)
 	}

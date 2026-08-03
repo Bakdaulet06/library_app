@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"library/internal/dto"
+	"library/internal/models"
+	"library/internal/params"
 	"library/internal/services"
 	"net/http"
 	"strconv"
@@ -62,12 +64,23 @@ func (h *EmployeeHandler) GetEmployee(w http.ResponseWriter, r *http.Request) {
 
 func (h *EmployeeHandler) ListEmployees(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	employees, err := h.employeeService.ListEmployees(r.Context())
+
+	// Parse query params (limit, offset, sort_by, order, q)
+	p := params.FromRequest(r)
+
+	employees, err := h.employeeService.ListEmployees(r.Context(), p)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "internal runtime exception listing profiles"})
 		return
 	}
+
+	// Ensure empty array [] is returned in JSON instead of null
+	if employees == nil {
+		employees = []models.Employee{}
+	}
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(employees)
 }
 

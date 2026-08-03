@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"library/internal/models"
+	"library/internal/params"
+	"strings"
 )
 
 type EmployeeRepository interface {
 	Create(ctx context.Context, exec GormExecutor, emp *models.Employee) error
 	GetByMemberID(ctx context.Context, exec GormExecutor, memberID int) (*models.Employee, error)
-	List(ctx context.Context, exec GormExecutor) ([]models.Employee, error)
+	List(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Employee, error)
 	Update(ctx context.Context, exec GormExecutor, emp *models.Employee) error
 	Delete(ctx context.Context, exec GormExecutor, memberID int) error
 }
@@ -55,16 +58,58 @@ func (r *employeeRepository) GetByMemberID(ctx context.Context, exec GormExecuto
 	return &emp, nil
 }
 
-func (r *employeeRepository) List(ctx context.Context, exec GormExecutor) ([]models.Employee, error) {
+func (r *employeeRepository) List(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Employee, error) {
 	query := `
 		SELECT 
 			e.id, e.member_id, e.position, e.salary, e.library_id,
 			m.email, m.role, m.joined_at
 		FROM employees e
-		JOIN members m ON e.member_id = m.id
-		ORDER BY e.id ASC`
+		JOIN members m ON e.member_id = m.id`
 
-	rows, err := exec.QueryContext(ctx, query)
+	var whereClauses []string
+	var args []interface{}
+	paramIdx := 1
+
+	// 1. Search by Position or Member Email (Case-insensitive ILIKE for Postgres)
+	if p.Search != "" {
+		searchTerm := "%" + p.Search + "%"
+		whereClauses = append(whereClauses, fmt.Sprintf("(e.position ILIKE $%d OR m.email ILIKE $%d)", paramIdx, paramIdx+1))
+		args = append(args, searchTerm, searchTerm)
+		paramIdx += 2
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// 2. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"id":         "e.id",
+		"position":   "e.position",
+		"salary":     "e.salary",
+		"library_id": "e.library_id",
+		"email":      "m.email",
+		"joined_at":  "m.joined_at",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "e.id" // Default sort column
+	}
+
+	order := strings.ToUpper(p.Order)
+	if order != "DESC" {
+		order = "ASC" // Default ordering direction
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, order)
+
+	// 3. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +127,10 @@ func (r *employeeRepository) List(ctx context.Context, exec GormExecutor) ([]mod
 		}
 		emp.Member.ID = emp.MemberID
 		employees = append(employees, emp)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return employees, nil

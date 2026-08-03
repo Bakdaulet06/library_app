@@ -7,15 +7,14 @@ import (
 	"fmt"
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 )
 
 type BookService interface {
 	CreateBook(ctx context.Context, req dto.CreateBookRequest) (*models.Book, error)
 	GetBookByID(ctx context.Context, id int) (*models.Book, error)
-	GetBooksByGenreID(ctx context.Context, genreID int) ([]models.Book, error)
-	ListAvailableBooks(ctx context.Context) ([]models.Book, error)
-	ListAllBooks(ctx context.Context) ([]models.Book, error)
+	ListAllBooks(ctx context.Context, params params.BookParams) ([]models.Book, error)
 	UpdateBook(ctx context.Context, id int, req dto.CreateBookRequest) (*models.Book, error)
 	DeleteBook(ctx context.Context, id int) error
 
@@ -67,12 +66,8 @@ func (s *bookService) GetBookByID(ctx context.Context, id int) (*models.Book, er
 	return book, nil
 }
 
-func (s *bookService) ListAvailableBooks(ctx context.Context) ([]models.Book, error) {
-	return s.bookRepo.ListAvailable(ctx, s.db)
-}
-
-func (s *bookService) ListAllBooks(ctx context.Context) ([]models.Book, error) {
-	return s.bookRepo.ListAll(ctx, s.db)
+func (s *bookService) ListAllBooks(ctx context.Context, params params.BookParams) ([]models.Book, error) {
+	return s.bookRepo.ListAll(ctx, s.db, params)
 }
 
 func (s *bookService) UpdateBook(ctx context.Context, id int, req dto.CreateBookRequest) (*models.Book, error) {
@@ -120,14 +115,4 @@ func (s *bookService) ListAllLoans(ctx context.Context) ([]models.Loan, error) {
 		return []models.Loan{}, nil // Return empty slice instead of nil
 	}
 	return loans, nil
-}
-
-func (s *bookService) GetBooksByGenreID(ctx context.Context, genreID int) ([]models.Book, error) {
-	// Optional: You can check if the genre exists here using your genreRepo if you have one
-	books, err := s.bookRepo.GetByGenreID(ctx, s.db, genreID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve books for genre ID %d: %w", genreID, err)
-	}
-
-	return books, nil
 }

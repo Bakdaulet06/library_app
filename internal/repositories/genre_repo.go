@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 
 	"library/internal/models"
+	"library/internal/params"
 )
 
 var (
@@ -17,7 +19,7 @@ var (
 type GenreRepository interface {
 	Create(ctx context.Context, exec GormExecutor, genre *models.Genre) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Genre, error)
-	GetAll(ctx context.Context, exec GormExecutor) ([]models.Genre, error)
+	GetAll(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Genre, error)
 	Update(ctx context.Context, exec GormExecutor, genre *models.Genre) error
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 }
@@ -55,9 +57,48 @@ func (r *genreRepository) GetByID(ctx context.Context, exec GormExecutor, id int
 	return &g, nil
 }
 
-func (r *genreRepository) GetAll(ctx context.Context, exec GormExecutor) ([]models.Genre, error) {
-	query := `SELECT id, name FROM genres ORDER BY id ASC`
-	rows, err := exec.QueryContext(ctx, query)
+func (r *genreRepository) GetAll(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Genre, error) {
+	query := `SELECT id, name FROM genres`
+
+	var whereClauses []string
+	var args []interface{}
+	paramIdx := 1
+
+	// 1. Search by Name (Case-insensitive ILIKE)
+	if p.Search != "" {
+		whereClauses = append(whereClauses, fmt.Sprintf("name ILIKE $%d", paramIdx))
+		args = append(args, "%"+p.Search+"%")
+		paramIdx++
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// 2. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"id":   "id",
+		"name": "name",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "id" // Default sorting column
+	}
+
+	orderDir := strings.ToUpper(p.Order)
+	if orderDir != "DESC" {
+		orderDir = "ASC" // Default ordering direction
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, orderDir)
+
+	// 3. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Execute Query
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +117,7 @@ func (r *genreRepository) GetAll(ctx context.Context, exec GormExecutor) ([]mode
 		return nil, err
 	}
 
-	// Always return an empty slice instead of null in JSON
+	// Ensure empty array [] is returned instead of null in JSON
 	if genres == nil {
 		genres = []models.Genre{}
 	}

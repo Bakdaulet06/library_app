@@ -7,6 +7,8 @@ import (
 	"strconv"
 
 	"library/internal/dto"
+	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 	"library/internal/services"
 )
@@ -69,14 +71,23 @@ func (h *GenreHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GenreHandler) GetAll(w http.ResponseWriter, r *http.Request) {
-	genres, err := h.service.GetAllGenres(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse query params (limit, offset, sort_by, order, q)
+	p := params.FromRequest(r)
+
+	genres, err := h.service.GetAllGenres(r.Context(), p)
 	if err != nil {
 		http.Error(w, `{"error": "failed to fetch genres"}`, http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(genres)
+	if genres == nil {
+		genres = []models.Genre{}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(genres)
 }
 
 func (h *GenreHandler) Update(w http.ResponseWriter, r *http.Request) {

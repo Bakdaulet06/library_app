@@ -4,14 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"library/internal/models"
+	"library/internal/params"
+	"strings"
 )
 
 type MemberRepository interface {
 	Create(ctx context.Context, exec GormExecutor, m *models.BookMember) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.BookMember, error)
 	GetByEmail(ctx context.Context, exec GormExecutor, email string) (*models.BookMember, error)
-	List(ctx context.Context, exec GormExecutor) ([]models.BookMember, error)
+	List(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.BookMember, error)
 	Update(ctx context.Context, exec GormExecutor, m *models.BookMember) error
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 	HasOutstandingLoans(ctx context.Context, exec GormExecutor, id int) (bool, error)
@@ -48,9 +51,45 @@ func (r *memberRepository) GetByEmail(ctx context.Context, exec GormExecutor, em
 	return &m, err
 }
 
-func (r *memberRepository) List(ctx context.Context, exec GormExecutor) ([]models.BookMember, error) {
-	query := `SELECT id, email, role, joined_at FROM members WHERE role = 'client' ORDER BY id ASC`
-	rows, err := exec.QueryContext(ctx, query)
+func (r *memberRepository) List(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.BookMember, error) {
+	query := `SELECT id, email, role, joined_at FROM members WHERE role = 'client'`
+
+	var args []interface{}
+	paramIdx := 1
+
+	// 1. Search filter (Email search using ILIKE)
+	if p.Search != "" {
+		searchTerm := "%" + p.Search + "%"
+		query += fmt.Sprintf(" AND email ILIKE $%d", paramIdx)
+		args = append(args, searchTerm)
+		paramIdx++
+	}
+
+	// 2. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"id":        "id",
+		"email":     "email",
+		"joined_at": "joined_at",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "id" // Default sorting column
+	}
+
+	orderDir := strings.ToUpper(p.Order)
+	if orderDir != "DESC" {
+		orderDir = "ASC" // Default ordering direction
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, orderDir)
+
+	// 3. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 4. Query Execution
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +103,15 @@ func (r *memberRepository) List(ctx context.Context, exec GormExecutor) ([]model
 		}
 		members = append(members, m)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if members == nil {
+		return []models.BookMember{}, nil
+	}
+
 	return members, nil
 }
 

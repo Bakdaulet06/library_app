@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"library/internal/dto"
+	"library/internal/params"
 	"library/internal/services"
 	"log"
 	"net/http"
@@ -59,26 +60,37 @@ func (h *BookHandler) GetBook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *BookHandler) ListBooks(w http.ResponseWriter, r *http.Request) {
-	// Optional Query Lookup Parameter filter: /books?available=true
-	availableFilter := r.URL.Query().Get("available")
+	query := r.URL.Query()
 
-	var books interface{}
-	var err error
-
-	if availableFilter == "true" {
-		books, err = h.service.ListAvailableBooks(r.Context())
-	} else {
-		books, err = h.service.ListAllBooks(r.Context())
+	// Defaults: limit 5, offset 0
+	limit, err := strconv.Atoi(query.Get("limit"))
+	if err != nil || limit <= 0 {
+		limit = 5
 	}
 
+	offset, err := strconv.Atoi(query.Get("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	genreID, _ := strconv.Atoi(query.Get("genre_id"))
+
+	params := params.BookParams{
+		GenreID:    genreID,
+		Pagination: params.FromRequest(r),
+	}
+
+	books, err := h.service.ListAllBooks(r.Context(), params)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "internal runtime exception listing books"})
 		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(books)
 }
-
 func (h *BookHandler) UpdateBook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	bookID, err := strconv.Atoi(r.PathValue("id"))
@@ -144,21 +156,4 @@ func (h *BookHandler) HandleListLoans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(loans)
-}
-
-func (h *BookHandler) GetBooksByGenreID(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	genreID, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || genreID <= 0 {
-		http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
-		return
-	}
-	books, err := h.service.GetBooksByGenreID(r.Context(), genreID)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	json.NewEncoder(w).Encode(books)
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 
 	"golang.org/x/crypto/bcrypt"
@@ -15,7 +16,7 @@ import (
 type EmployeeService interface {
 	RegisterEmployee(ctx context.Context, req dto.CreateEmployeeRequest) (*models.Employee, error)
 	GetEmployeeByMemberID(ctx context.Context, memberID int) (*models.Employee, error)
-	ListEmployees(ctx context.Context) ([]models.Employee, error)
+	ListEmployees(ctx context.Context, p params.Pagination) ([]models.Employee, error)
 	UpdateEmployee(ctx context.Context, memberID int, req dto.UpdateEmployeeRequest) (*models.Employee, error)
 	DeleteEmployee(ctx context.Context, memberID int) error
 }
@@ -111,8 +112,8 @@ func (s *employeeService) GetEmployeeByMemberID(ctx context.Context, memberID in
 	return emp, nil
 }
 
-func (s *employeeService) ListEmployees(ctx context.Context) ([]models.Employee, error) {
-	return s.employeeRepo.List(ctx, s.db)
+func (s *employeeService) ListEmployees(ctx context.Context, p params.Pagination) ([]models.Employee, error) {
+	return s.employeeRepo.List(ctx, s.db, p)
 }
 
 func (s *employeeService) UpdateEmployee(ctx context.Context, memberID int, req dto.UpdateEmployeeRequest) (*models.Employee, error) {

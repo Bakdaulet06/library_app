@@ -6,13 +6,14 @@ import (
 
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/repositories"
 )
 
 type GenreService interface {
 	CreateGenre(ctx context.Context, req dto.CreateOrUpdateGenreRequest) (*models.Genre, error)
 	GetGenreByID(ctx context.Context, id int) (*models.Genre, error)
-	GetAllGenres(ctx context.Context) ([]models.Genre, error)
+	GetAllGenres(ctx context.Context, p params.Pagination) ([]models.Genre, error)
 	UpdateGenre(ctx context.Context, id int, req dto.CreateOrUpdateGenreRequest) (*models.Genre, error)
 	DeleteGenre(ctx context.Context, id int) error
 }
@@ -40,8 +41,17 @@ func (s *genreService) GetGenreByID(ctx context.Context, id int) (*models.Genre,
 	return s.repo.GetByID(ctx, s.db, id)
 }
 
-func (s *genreService) GetAllGenres(ctx context.Context) ([]models.Genre, error) {
-	return s.repo.GetAll(ctx, s.db)
+func (s *genreService) GetAllGenres(ctx context.Context, p params.Pagination) ([]models.Genre, error) {
+	genres, err := s.repo.GetAll(ctx, s.db, p)
+	if err != nil {
+		return nil, err
+	}
+
+	if genres == nil {
+		return []models.Genre{}, nil
+	}
+
+	return genres, nil
 }
 
 func (s *genreService) UpdateGenre(ctx context.Context, id int, req dto.CreateOrUpdateGenreRequest) (*models.Genre, error) {

@@ -22,7 +22,6 @@ func registerLibraryRoutes(mux *http.ServeMux, deps Dependencies) {
 	mux.Handle("GET /libraries/{id}/books", protected(deps, deps.LibraryHandler.GetLibraryBooks))
 	mux.Handle("GET /libraries/{id}/loans", protected(deps, deps.LibraryHandler.GetLibraryLoans, models.RoleAdmin, models.RoleEmployee))
 	mux.Handle("DELETE /libraries/{id}/books/{book_id}", protected(deps, deps.LibraryHandler.DeleteBookFromLibrary, models.RoleAdmin))
-	mux.Handle("GET /libraries/{id}/books/genres/{genre_id}", protected(deps, deps.LibraryHandler.GetLibraryBooksByGenre))
 	mux.Handle("POST /libraries/{id}/books/{book_id}/borrow", protected(deps, deps.LibraryHandler.BorrowBook, models.RoleClient))
 	mux.Handle("POST /libraries/{id}/books/{book_id}/buy", protected(deps, deps.OrderHandler.BuyBook, models.RoleClient))
 	mux.Handle("POST /libraries/{id}/return", protected(deps, deps.LibraryHandler.ReturnBook, models.RoleClient))

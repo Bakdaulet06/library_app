@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"library/internal/models"
+	"library/internal/params"
+	"strconv"
+	"strings"
 )
 
 // ErrBookNotInLibrary is returned when the library/book pair has no
@@ -17,8 +20,8 @@ type OrderRepository interface {
 	CreateOrder(ctx context.Context, tx *sql.Tx, memberID, libraryID int, totalAmount float64) (int, error)
 	AddOrderItem(ctx context.Context, tx *sql.Tx, orderID, bookID, quantity int, unitPrice, subtotal float64) error
 	GetOrdersByMemberID(ctx context.Context, exec GormExecutor, memberID int) ([]models.Order, error)
-	GetOrdersByLibraryID(ctx context.Context, exec GormExecutor, libraryID int) ([]models.Order, error)
-	GetAllOrders(ctx context.Context, exec GormExecutor) ([]models.Order, error)
+	GetOrdersByLibraryID(ctx context.Context, exec GormExecutor, libraryID int, p params.OrderParams) ([]models.Order, error)
+	GetAllOrders(ctx context.Context, exec GormExecutor, p params.OrderParams) ([]models.Order, error)
 }
 
 type orderRepository struct{}
@@ -137,15 +140,58 @@ func (r *orderRepository) GetOrdersByMemberID(ctx context.Context, exec GormExec
 }
 
 // GetOrdersByLibraryID fetches all orders along with their nested line items for a given library
-func (r *orderRepository) GetOrdersByLibraryID(ctx context.Context, exec GormExecutor, libraryID int) ([]models.Order, error) {
-	// 1. Fetch parent orders
+func (r *orderRepository) GetOrdersByLibraryID(ctx context.Context, exec GormExecutor, libraryID int, p params.OrderParams) ([]models.Order, error) {
+	// 1. Build Base Order Query
 	orderQuery := `
 		SELECT id, member_id, library_id, total_amount, created_at
 		FROM orders
-		WHERE library_id = $1
-		ORDER BY created_at DESC`
+		WHERE library_id = $1`
 
-	rows, err := exec.QueryContext(ctx, orderQuery, libraryID)
+	args := []interface{}{libraryID}
+	paramIdx := 2 // $1 is reserved for libraryID
+
+	// Filter by Member ID
+	if p.MemberID > 0 {
+		orderQuery += fmt.Sprintf(" AND member_id = $%d", paramIdx)
+		args = append(args, p.MemberID)
+		paramIdx++
+	}
+
+	// Optional Numeric ID search (e.g., search specific order_id or member_id)
+	if p.Search != "" {
+		if idSearch, err := strconv.Atoi(p.Search); err == nil && idSearch > 0 {
+			orderQuery += fmt.Sprintf(" AND (id = $%d OR member_id = $%d)", paramIdx, paramIdx+1)
+			args = append(args, idSearch, idSearch)
+			paramIdx += 2
+		}
+	}
+
+	// Column Allowlist for Safe Sorting
+	allowedColumns := map[string]string{
+		"id":           "id",
+		"member_id":    "member_id",
+		"total_amount": "total_amount",
+		"created_at":   "created_at",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "created_at" // Default sort column
+	}
+
+	orderDir := strings.ToUpper(p.Order)
+	if orderDir != "ASC" {
+		orderDir = "DESC" // Default ordering direction for orders
+	}
+
+	orderQuery += fmt.Sprintf(" ORDER BY %s %s", sortColumn, orderDir)
+
+	// Apply Limit & Offset
+	orderQuery += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// Execute Parent Orders Query
+	rows, err := exec.QueryContext(ctx, orderQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch orders for library: %w", err)
 	}
@@ -153,13 +199,14 @@ func (r *orderRepository) GetOrdersByLibraryID(ctx context.Context, exec GormExe
 
 	var orders []models.Order
 	orderMap := make(map[int]*models.Order)
+	var orderIDs []interface{}
 
 	for rows.Next() {
 		var o models.Order
 		if err := rows.Scan(&o.ID, &o.MemberID, &o.LibraryID, &o.TotalAmount, &o.CreatedAt); err != nil {
 			return nil, err
 		}
-		o.Items = []models.OrderItem{}
+		o.Items = []models.OrderItem{} // Ensure empty array instead of null
 		orders = append(orders, o)
 	}
 
@@ -167,19 +214,25 @@ func (r *orderRepository) GetOrdersByLibraryID(ctx context.Context, exec GormExe
 		return []models.Order{}, nil
 	}
 
+	// Map pointers and gather order IDs for optimized line item fetching
 	for i := range orders {
 		orderMap[orders[i].ID] = &orders[i]
+		orderIDs = append(orderIDs, orders[i].ID)
 	}
 
-	// 2. Fetch corresponding order_items
-	itemsQuery := `
-		SELECT oi.id, oi.order_id, oi.book_id, oi.quantity, oi.unit_price, oi.subtotal
-		FROM order_items oi
-		JOIN orders o ON o.id = oi.order_id
-		WHERE o.library_id = $1
-		ORDER BY oi.id ASC`
+	// 2. Fetch Order Items strictly for the paged orders ($1, $2, ...)
+	inPlaceholders := make([]string, len(orderIDs))
+	for i := range orderIDs {
+		inPlaceholders[i] = fmt.Sprintf("$%d", i+1)
+	}
 
-	itemRows, err := exec.QueryContext(ctx, itemsQuery, libraryID)
+	itemsQuery := fmt.Sprintf(`
+		SELECT id, order_id, book_id, quantity, unit_price, subtotal
+		FROM order_items
+		WHERE order_id IN (%s)
+		ORDER BY id ASC`, strings.Join(inPlaceholders, ", "))
+
+	itemRows, err := exec.QueryContext(ctx, itemsQuery, orderIDs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch order items: %w", err)
 	}
@@ -195,17 +248,71 @@ func (r *orderRepository) GetOrdersByLibraryID(ctx context.Context, exec GormExe
 		}
 	}
 
+	if err := itemRows.Err(); err != nil {
+		return nil, err
+	}
+
 	return orders, nil
 }
 
 // GetAllOrders fetches every order and its line items in the system
-func (r *orderRepository) GetAllOrders(ctx context.Context, exec GormExecutor) ([]models.Order, error) {
-	orderQuery := `
+// GetAllOrders fetches every order and its line items in the system with pagination & filters
+func (r *orderRepository) GetAllOrders(ctx context.Context, exec GormExecutor, p params.OrderParams) ([]models.Order, error) {
+	query := `
 		SELECT id, member_id, library_id, total_amount, created_at
-		FROM orders
-		ORDER BY created_at DESC`
+		FROM orders`
 
-	rows, err := exec.QueryContext(ctx, orderQuery)
+	var whereClauses []string
+	var args []interface{}
+	paramIdx := 1
+
+	// 1. Optional Filter by Member ID
+	if p.MemberID > 0 {
+		whereClauses = append(whereClauses, fmt.Sprintf("member_id = $%d", paramIdx))
+		args = append(args, p.MemberID)
+		paramIdx++
+	}
+
+	// 2. Optional Numeric Search Filter (Order ID, Member ID, or Library ID)
+	if p.Search != "" {
+		if idSearch, err := strconv.Atoi(p.Search); err == nil && idSearch > 0 {
+			whereClauses = append(whereClauses, fmt.Sprintf("(id = $%d OR member_id = $%d OR library_id = $%d)", paramIdx, paramIdx+1, paramIdx+2))
+			args = append(args, idSearch, idSearch, idSearch)
+			paramIdx += 3
+		}
+	}
+
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// 3. Allowlist Sorting Columns (Prevents SQL Injection)
+	allowedColumns := map[string]string{
+		"id":           "id",
+		"member_id":    "member_id",
+		"library_id":   "library_id",
+		"total_amount": "total_amount",
+		"created_at":   "created_at",
+	}
+
+	sortColumn, exists := allowedColumns[strings.ToLower(p.SortBy)]
+	if !exists {
+		sortColumn = "created_at" // Default sort column
+	}
+
+	orderDir := strings.ToUpper(p.Order)
+	if orderDir != "ASC" {
+		orderDir = "DESC" // Default ordering direction for orders
+	}
+
+	query += fmt.Sprintf(" ORDER BY %s %s", sortColumn, orderDir)
+
+	// 4. Limit & Offset
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", paramIdx, paramIdx+1)
+	args = append(args, p.Limit, p.Offset)
+
+	// 5. Execute Parent Orders Query
+	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch all orders: %w", err)
 	}
@@ -213,13 +320,14 @@ func (r *orderRepository) GetAllOrders(ctx context.Context, exec GormExecutor) (
 
 	var orders []models.Order
 	orderMap := make(map[int]*models.Order)
+	var orderIDs []interface{}
 
 	for rows.Next() {
 		var o models.Order
 		if err := rows.Scan(&o.ID, &o.MemberID, &o.LibraryID, &o.TotalAmount, &o.CreatedAt); err != nil {
 			return nil, err
 		}
-		o.Items = []models.OrderItem{}
+		o.Items = []models.OrderItem{} // Ensure empty slice [] instead of null in JSON
 		orders = append(orders, o)
 	}
 
@@ -227,17 +335,25 @@ func (r *orderRepository) GetAllOrders(ctx context.Context, exec GormExecutor) (
 		return []models.Order{}, nil
 	}
 
+	// Map order pointers and extract IDs for optimized line-item fetching
 	for i := range orders {
 		orderMap[orders[i].ID] = &orders[i]
+		orderIDs = append(orderIDs, orders[i].ID)
 	}
 
-	// Fetch all line items attached to these orders
-	itemsQuery := `
+	// 6. Fetch Order Items strictly for the paged parent orders ($1, $2, ...)
+	inPlaceholders := make([]string, len(orderIDs))
+	for i := range orderIDs {
+		inPlaceholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+
+	itemsQuery := fmt.Sprintf(`
 		SELECT id, order_id, book_id, quantity, unit_price, subtotal
 		FROM order_items
-		ORDER BY id ASC`
+		WHERE order_id IN (%s)
+		ORDER BY id ASC`, strings.Join(inPlaceholders, ", "))
 
-	itemRows, err := exec.QueryContext(ctx, itemsQuery)
+	itemRows, err := exec.QueryContext(ctx, itemsQuery, orderIDs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch order items: %w", err)
 	}
@@ -251,6 +367,10 @@ func (r *orderRepository) GetAllOrders(ctx context.Context, exec GormExecutor) (
 		if parentOrder, exists := orderMap[item.OrderID]; exists {
 			parentOrder.Items = append(parentOrder.Items, item)
 		}
+	}
+
+	if err := itemRows.Err(); err != nil {
+		return nil, err
 	}
 
 	return orders, nil

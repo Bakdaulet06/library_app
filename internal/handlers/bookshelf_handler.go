@@ -7,6 +7,7 @@ import (
 
 	"library/internal/dto"
 	"library/internal/models"
+	"library/internal/params"
 	"library/internal/services"
 )
 
@@ -65,13 +66,21 @@ func (h *BookshelfHandler) CreateBookshelf(w http.ResponseWriter, r *http.Reques
 // GET /libraries/{library_id}/bookshelves
 func (h *BookshelfHandler) GetBookshelvesByLibraryID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
 	idStr := r.PathValue("id")
 	libraryID, err := strconv.Atoi(idStr)
 	if err != nil || libraryID <= 0 {
 		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
 		return
 	}
-	shelves, err := h.bookshelfService.GetBookshelvesByLibraryID(r.Context(), libraryID)
+
+	// 1. Build params struct using helper + path value
+	p := params.BookshelfParams{
+		LibraryID:  libraryID,
+		Pagination: params.FromRequest(r),
+	}
+
+	shelves, err := h.bookshelfService.GetBookshelvesByLibraryID(r.Context(), p)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -128,20 +137,26 @@ func (h *BookshelfHandler) GetBookshelfByID(w http.ResponseWriter, r *http.Reque
 // GET /libraries/{library_id}/bookshelves/{shelf_id}/books
 func (h *BookshelfHandler) GetBooksByShelfID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
 	idStr := r.PathValue("id")
 	shelfIDStr := r.PathValue("shelf_id")
+
 	libraryID, err := strconv.Atoi(idStr)
 	if err != nil || libraryID <= 0 {
 		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
 		return
 	}
+
 	shelfID, err := strconv.Atoi(shelfIDStr)
 	if err != nil || shelfID <= 0 {
 		http.Error(w, `{"error":"invalid shelf ID"}`, http.StatusBadRequest)
 		return
 	}
 
-	books, err := h.bookshelfService.GetBooksByShelfID(r.Context(), libraryID, shelfID)
+	// Parse query params using your existing function
+	p := params.FromRequest(r)
+
+	books, err := h.bookshelfService.GetBooksByShelfID(r.Context(), libraryID, shelfID, p)
 	if err != nil {
 		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusInternalServerError)
 		return

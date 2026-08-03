@@ -8,6 +8,8 @@ import (
 
 	"library/internal/dto"
 	"library/internal/middleware"
+	"library/internal/models"
+	"library/internal/params"
 	"library/internal/services"
 )
 
@@ -47,13 +49,17 @@ func (h *LibraryHandler) RegisterLibrary(w http.ResponseWriter, r *http.Request)
 
 func (h *LibraryHandler) ListLibraries(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	libraries, err := h.libraryService.ListLibraries(r.Context())
+
+	// Parse query params (limit, offset, sort_by, order, q)
+	p := params.FromRequest(r)
+
+	libraries, err := h.libraryService.ListLibraries(r.Context(), p)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(libraries)
 }
 
@@ -141,6 +147,7 @@ func (h *LibraryHandler) DeleteBookFromLibrary(w http.ResponseWriter, r *http.Re
 
 func (h *LibraryHandler) GetLibraryBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
 	idStr := r.PathValue("id")
 	libraryID, err := strconv.Atoi(idStr)
 	if err != nil || libraryID <= 0 {
@@ -148,14 +155,21 @@ func (h *LibraryHandler) GetLibraryBooks(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	books, err := h.libraryService.GetLibraryBooks(r.Context(), libraryID)
+	// Parse both GenreID and standard Pagination params
+	p := params.BookParamsFromRequest(r)
+
+	books, err := h.libraryService.GetLibraryBooks(r.Context(), libraryID, p)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(books)
+	if books == nil {
+		books = []models.LibraryBook{}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(books)
 }
 
 func (h *LibraryHandler) GetLibraryLoans(w http.ResponseWriter, r *http.Request) {
@@ -174,30 +188,6 @@ func (h *LibraryHandler) GetLibraryLoans(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(loans)
-}
-
-func (h *LibraryHandler) GetLibraryBooksByGenre(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	idStr := r.PathValue("id")
-	genreIdStr := r.PathValue("genre_id")
-	libraryID, err := strconv.Atoi(idStr)
-	if err != nil || libraryID <= 0 {
-		http.Error(w, `{"error":"invalid library ID"}`, http.StatusBadRequest)
-		return
-	}
-	genreID, err := strconv.Atoi(genreIdStr)
-	if err != nil || genreID <= 0 {
-		http.Error(w, `{"error":"invalid genre ID"}`, http.StatusBadRequest)
-		return
-	}
-	books, err := h.libraryService.GetLibraryBooksByGenre(r.Context(), libraryID, genreID)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-
-	json.NewEncoder(w).Encode(books)
 }
 
 // Transactional Action endpoints

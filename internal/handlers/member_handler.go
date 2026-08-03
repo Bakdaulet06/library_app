@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"library/internal/dto"
+	"library/internal/models"
+	"library/internal/params"
 	"library/internal/services"
 	"net/http"
 	"strconv"
@@ -33,12 +35,23 @@ func (h *MemberHandler) GetMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MemberHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	members, err := h.memberService.ListMembers(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse query params (limit, offset, sort_by, order, q)
+	p := params.FromRequest(r)
+
+	members, err := h.memberService.ListMembers(r.Context(), p)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": "internal runtime exception listing profiles"})
 		return
 	}
+
+	if members == nil {
+		members = []models.BookMember{}
+	}
+
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(members)
 }
 
