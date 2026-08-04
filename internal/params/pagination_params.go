@@ -21,7 +21,7 @@ func FromRequest(r *http.Request) Pagination {
 
 	limit, err := strconv.Atoi(query.Get("limit"))
 	if err != nil || limit <= 0 {
-		limit = 5 // Default page size
+		limit = 20 // Default page size
 	}
 
 	offset, err := strconv.Atoi(query.Get("offset"))

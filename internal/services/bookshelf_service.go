@@ -25,17 +25,20 @@ type bookshelfService struct {
 	db            *sql.DB
 	bookshelfRepo repositories.BookshelfRepository
 	libraryRepo   repositories.LibraryRepository
+	inventoryRepo repositories.BookInventoryRepository
 }
 
 func NewBookshelfService(
 	db *sql.DB,
 	bookshelfRepo repositories.BookshelfRepository,
 	libraryRepo repositories.LibraryRepository,
+	inventoryRepo repositories.BookInventoryRepository,
 ) BookshelfService {
 	return &bookshelfService{
 		db:            db,
 		bookshelfRepo: bookshelfRepo,
 		libraryRepo:   libraryRepo,
+		inventoryRepo: inventoryRepo,
 	}
 }
 
@@ -64,13 +67,27 @@ func (s *bookshelfService) GetBookshelfByID(ctx context.Context, libraryID, shel
 
 // GetBookshelvesByLibraryID lists all bookshelves belonging to a library branch
 func (s *bookshelfService) GetBookshelvesByLibraryID(ctx context.Context, p params.BookshelfParams) ([]models.Bookshelf, error) {
-	if p.LibraryID <= 0 {
-		return nil, errors.New("invalid library id")
+	// 1. Check if the library exists
+	exists, err := s.libraryRepo.LibraryExistsByID(ctx, s.db, p.LibraryID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check library existence: %w", err)
 	}
+	if !exists {
+		return nil, fmt.Errorf("Library with id %d doesn't exist", p.LibraryID) // Returns 404 domain error
+	}
+
+	// 2. Fetch bookshelves
 	return s.bookshelfRepo.GetByLibraryID(ctx, s.db, p)
 }
 
 func (s *bookshelfService) GetBooksByShelfID(ctx context.Context, libraryID, shelfID int, p params.Pagination) ([]dto.BookWithShelfStockResponse, error) {
+	exists, err := s.inventoryRepo.ShelfAndLibraryExists(ctx, s.db, libraryID, shelfID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check inventory existence: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("Invalid bookshelf and library id parameters") // Returns 404 domain error
+	}
 	books, err := s.bookshelfRepo.GetBooksByShelfID(ctx, s.db, libraryID, shelfID, p)
 	if err != nil {
 		return nil, err

@@ -22,6 +22,8 @@ type BookInventoryRepository interface {
 	UpdateAvailableCopies(ctx context.Context, tx *sql.Tx, libraryID, bookID, bookshelfID, copiesDelta int) error
 
 	GetShelfAllocationsByBook(ctx context.Context, exec GormExecutor, libraryID, bookID int) ([]ShelfAllocation, error)
+
+	ShelfAndLibraryExists(ctx context.Context, exec GormExecutor, libraryID, shelfID int) (bool, error)
 }
 
 type bookInventoryRepository struct{}
@@ -265,4 +267,22 @@ func (r *bookInventoryRepository) UpdateAvailableCopies(
 	}
 
 	return nil
+}
+
+func (r *bookInventoryRepository) ShelfAndLibraryExists(ctx context.Context, exec GormExecutor, libraryID, shelfID int) (bool, error) {
+	query := `
+		SELECT EXISTS(
+			SELECT 1 
+			FROM book_inventory 
+			WHERE library_id = $1 AND bookshelf_id = $2
+		)
+	`
+
+	var exists bool
+	err := exec.QueryRowContext(ctx, query, libraryID, shelfID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check library %d and shelf %d existence: %w", libraryID, shelfID, err)
+	}
+
+	return exists, nil
 }

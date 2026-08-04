@@ -57,9 +57,9 @@ func (r *bookRepository) Create(ctx context.Context, exec GormExecutor, b *model
 }
 
 func (r *bookRepository) GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Book, error) {
-	query := `SELECT id, title, author, isbn, genre_id, created_at FROM books WHERE id = $1`
+	query := `SELECT id, title, author, isbn, genre_id, price, created_at FROM books WHERE id = $1`
 	var b models.Book
-	err := exec.QueryRowContext(ctx, query, id).Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.CreatedAt)
+	err := exec.QueryRowContext(ctx, query, id).Scan(&b.ID, &b.Title, &b.Author, &b.Isbn, &b.GenreID, &b.Price, &b.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -147,7 +147,7 @@ func (r *bookRepository) ListAll(ctx context.Context, exec GormExecutor, params 
 }
 
 func (r *bookRepository) Update(ctx context.Context, exec GormExecutor, b *models.Book) error {
-	query := `UPDATE books SET title = $1, author = $2, isbn = $3, genre_id = $4, price = $5 WHERE id = $5`
+	query := `UPDATE books SET title = $1, author = $2, isbn = $3, genre_id = $4, price = $5 WHERE id = $6`
 	res, err := exec.ExecContext(ctx, query, b.Title, b.Author, b.Isbn, b.GenreID, b.Price, b.ID)
 	if err != nil {
 		return err
@@ -222,7 +222,8 @@ func (r *bookRepository) ListLoans(ctx context.Context, exec GormExecutor) ([]mo
 			borrowed_at,
 			returned_at,
 			borrowed_library_id,
-			returned_library_id
+			returned_library_id,
+			borrowed_days
 		FROM loans
 		ORDER BY id DESC
 	`
@@ -243,6 +244,7 @@ func (r *bookRepository) ListLoans(ctx context.Context, exec GormExecutor) ([]mo
 			&l.ReturnedAt, // *time.Time handles [null] nicely
 			&l.BorrowedLibraryID,
 			&l.ReturnedLibraryID, // *int handles [null] nicely!
+			&l.BorrowedDays,
 		)
 		fmt.Println(err)
 		if err != nil {

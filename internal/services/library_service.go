@@ -70,7 +70,7 @@ func (s *libraryService) RegisterLibrary(ctx context.Context, req dto.CreateLibr
 	}
 
 	// 2. Check if a library is already registered at this verified address
-	existingLibrary, err := s.libraryRepo.LibraryExists(ctx, s.db, normalizedAddress)
+	existingLibrary, err := s.libraryRepo.LibraryExistsByAddress(ctx, s.db, normalizedAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check library existence: %w", err)
 	}
@@ -120,18 +120,33 @@ func (s *libraryService) ListLibraries(ctx context.Context, p params.Pagination)
 // 4. UpdateLibrary
 func (s *libraryService) UpdateLibrary(ctx context.Context, id int, req dto.CreateLibraryRequest) (*models.Library, error) {
 	// Verify library exists before updating
-	existing, err := s.libraryRepo.GetByID(ctx, s.db, id)
+	currentLib, err := s.libraryRepo.GetByID(ctx, s.db, id)
 	if err != nil {
-		return nil, fmt.Errorf("database error checking library: %w", err)
+		return nil, fmt.Errorf("failed to check library existence: %w", err)
 	}
-	if existing == nil {
-		return nil, errors.New("cannot update: library branch record does not exist")
+	if currentLib == nil {
+		return nil, fmt.Errorf("Library with id %d doesn't exist", id) // Returns 404 domain error
+	}
+
+	normalizedAddress, err := s.geocoder.ValidateAndNormalizeAddress(ctx, req.Address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address: %w", err)
+	}
+
+	if normalizedAddress != currentLib.Address {
+		exists, err := s.libraryRepo.LibraryExistsByAddress(ctx, s.db, normalizedAddress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check address uniqueness: %w", err)
+		}
+		if exists {
+			return nil, errors.New("a library is already registered at this verified address")
+		}
 	}
 
 	library := &models.Library{
 		ID:      id,
 		Name:    req.Name,
-		Address: req.Address,
+		Address: normalizedAddress,
 	}
 
 	if err := s.libraryRepo.Update(ctx, s.db, library); err != nil {
@@ -150,6 +165,17 @@ func (s *libraryService) DeleteLibrary(ctx context.Context, id int) error {
 	}
 	if existing == nil {
 		return errors.New("cannot delete: library branch record does not exist")
+	}
+
+	// 1. Check for linked books in inventory
+	hasBooks, err := s.libraryRepo.HasBooksInInventory(ctx, s.db, id)
+	if err != nil {
+		return fmt.Errorf("failed to check library inventory: %w", err)
+	}
+
+	// 2. Reject operation if inventory exists
+	if hasBooks {
+		return errors.New("cannot process operation: library still has books in inventory")
 	}
 
 	if err := s.libraryRepo.Delete(ctx, s.db, id); err != nil {

@@ -71,10 +71,10 @@ func main() {
 	memberService := services.NewMemberService(db, memberRepo, bookRepo)
 	bookInventoryService := services.NewBookInventoryService(db, bookInventoryRepo, bookRepo, libraryRepo, bookshelfRepo)
 	libraryService := services.NewLibraryService(db, libraryRepo, bookRepo, memberRepo, bookInventoryRepo, bookshelfRepo, *geocoder, profileRepo)
-	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo)
+	bookshelfService := services.NewBookshelfService(db, bookshelfRepo, libraryRepo, bookInventoryRepo)
 	userService := services.NewUserService(db, userRepo)
 	empService := services.NewEmployeeService(db, empRepo, memberRepo, userRepo, libraryRepo)
-	orderService := services.NewOrderService(db, orderRepo, bookInventoryRepo, bookshelfRepo)
+	orderService := services.NewOrderService(db, orderRepo, bookInventoryRepo, bookshelfRepo, profileRepo)
 	profileService := services.NewProfileService(db, profileRepo)
 	genreService := services.NewGenreService(db, genreRepo)
 

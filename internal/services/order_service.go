@@ -29,10 +29,11 @@ type orderService struct {
 	orderRepo         repositories.OrderRepository
 	bookInventoryRepo repositories.BookInventoryRepository
 	bookshelfRepo     repositories.BookshelfRepository
+	profileRepo       repositories.ProfileRepository
 }
 
-func NewOrderService(db *sql.DB, orderRepo repositories.OrderRepository, bookInventoryRepo repositories.BookInventoryRepository, bookshelfRepo repositories.BookshelfRepository) *orderService {
-	return &orderService{db: db, orderRepo: orderRepo, bookInventoryRepo: bookInventoryRepo, bookshelfRepo: bookshelfRepo}
+func NewOrderService(db *sql.DB, orderRepo repositories.OrderRepository, bookInventoryRepo repositories.BookInventoryRepository, bookshelfRepo repositories.BookshelfRepository, profileRepo repositories.ProfileRepository) *orderService {
+	return &orderService{db: db, orderRepo: orderRepo, bookInventoryRepo: bookInventoryRepo, bookshelfRepo: bookshelfRepo, profileRepo: profileRepo}
 }
 
 // BuyBookResult is the outcome of a successful purchase, handed back to the
@@ -128,6 +129,18 @@ func (s *orderService) BuyBooks(ctx context.Context, req dto.BuyBookRequestFull)
 
 	// 5. Create Order & Order Items
 	totalAmount := price * float64(req.Quantity)
+
+	card, err := s.profileRepo.GetCardByUserID(ctx, s.db, req.MemberID)
+	if err != nil {
+		return nil, err
+	}
+	if card.Amount < totalAmount {
+		return nil, fmt.Errorf("could not fulfill order: not enough money")
+	}
+
+	if err := s.profileRepo.UpdateCardBalance(ctx, s.db, card.ID, -totalAmount); err != nil {
+		return nil, err
+	}
 
 	orderID, err := s.orderRepo.CreateOrder(ctx, tx, req.MemberID, req.LibraryID, totalAmount)
 	if err != nil {

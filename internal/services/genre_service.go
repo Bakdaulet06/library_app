@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 
 	"library/internal/dto"
 	"library/internal/models"
@@ -28,6 +30,13 @@ func NewGenreService(db *sql.DB, repo repositories.GenreRepository) GenreService
 }
 
 func (s *genreService) CreateGenre(ctx context.Context, req dto.CreateOrUpdateGenreRequest) (*models.Genre, error) {
+	exists, err := s.repo.ExistsByName(ctx, s.db, req.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check genre: %w", err)
+	}
+	if exists {
+		return nil, fmt.Errorf("Genre with this name already exists")
+	}
 	genre := &models.Genre{
 		Name: req.Name,
 	}
@@ -38,6 +47,13 @@ func (s *genreService) CreateGenre(ctx context.Context, req dto.CreateOrUpdateGe
 }
 
 func (s *genreService) GetGenreByID(ctx context.Context, id int) (*models.Genre, error) {
+	exists, err := s.repo.ExistsByID(ctx, s.db, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check genre: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("Genre with this id doesn't exist")
+	}
 	return s.repo.GetByID(ctx, s.db, id)
 }
 
@@ -67,5 +83,21 @@ func (s *genreService) UpdateGenre(ctx context.Context, id int, req dto.CreateOr
 }
 
 func (s *genreService) DeleteGenre(ctx context.Context, id int) error {
-	return s.repo.Delete(ctx, s.db, id)
+	// 1. Check if any books are associated with this genre
+	hasBookWithThisGenre, err := s.repo.HasBookWithThisGenre(ctx, s.db, id)
+	if err != nil {
+		return fmt.Errorf("failed to check genre usage: %w", err)
+	}
+
+	// 2. Prevent deletion if books are using this genre
+	if hasBookWithThisGenre {
+		return errors.New("cannot delete genre: it is assigned to one or more books") // Return domain error for HTTP 400/409 handler
+	}
+
+	// 3. Delete the genre
+	if err := s.repo.Delete(ctx, s.db, id); err != nil {
+		return fmt.Errorf("failed to delete genre: %w", err)
+	}
+
+	return nil
 }

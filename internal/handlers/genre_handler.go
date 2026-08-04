@@ -39,7 +39,7 @@ func (h *GenreHandler) Create(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusConflict)
 			return
 		}
-		http.Error(w, `{"error": "failed to create genre"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error": "`+err.Error()+`}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (h *GenreHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusNotFound)
 			return
 		}
-		http.Error(w, `{"error": "failed to delete genre"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 

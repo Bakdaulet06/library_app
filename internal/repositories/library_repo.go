@@ -18,7 +18,9 @@ type LibraryRepository interface {
 	Delete(ctx context.Context, exec GormExecutor, id int) error
 	Update(ctx context.Context, exec GormExecutor, m *models.Library) error
 	GetByID(ctx context.Context, exec GormExecutor, id int) (*models.Library, error)
-	LibraryExists(ctx context.Context, exec GormExecutor, address string) (bool, error)
+	LibraryExistsByID(ctx context.Context, exec GormExecutor, id int) (bool, error)
+	LibraryExistsByAddress(ctx context.Context, exec GormExecutor, address string) (bool, error)
+	HasBooksInInventory(ctx context.Context, exec GormExecutor, libraryID int) (bool, error)
 
 	CreateLibraryEmployee(ctx context.Context, exec GormExecutor, libraryID, memberID int, position models.Position) error
 	CanAddEmployee(ctx context.Context, exec GormExecutor, libraryID int, pos models.Position) (bool, error)
@@ -145,7 +147,7 @@ func (r *libraryRepository) ListAll(ctx context.Context, exec GormExecutor, p pa
 func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor, libraryID int, p params.BookParams) ([]models.LibraryBook, error) {
 	query := `
 		SELECT 
-			b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at,
+			b.id, b.title, b.author, b.isbn, b.genre_id, b.price, b.created_at,
 			SUM(bi.available_copies) AS total_available_copies
 		FROM books b
 		INNER JOIN book_inventory bi ON b.id = bi.book_id
@@ -170,7 +172,7 @@ func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor,
 	}
 
 	// 3. Group By
-	query += ` GROUP BY b.id, b.title, b.author, b.isbn, b.genre_id, b.created_at`
+	query += ` GROUP BY b.id, b.title, b.author, b.isbn, b.genre_id, b.price, b.created_at`
 
 	// 4. Allowlist Sorting Columns
 	allowedColumns := map[string]string{
@@ -179,6 +181,7 @@ func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor,
 		"author":                 "b.author",
 		"isbn":                   "b.isbn",
 		"created_at":             "b.created_at",
+		"price":                  "b.price",
 		"total_available_copies": "total_available_copies",
 	}
 
@@ -214,6 +217,7 @@ func (r *libraryRepository) ListAllBooks(ctx context.Context, exec GormExecutor,
 			&b.Book.Author,
 			&b.Book.Isbn,
 			&b.Book.GenreID,
+			&b.Book.Price,
 			&b.Book.CreatedAt,
 			&b.TotalAvailableCopies,
 		); err != nil {
@@ -294,7 +298,19 @@ func (r *libraryRepository) CreateLibraryEmployee(ctx context.Context, exec Gorm
 	return nil
 }
 
-func (r *libraryRepository) LibraryExists(ctx context.Context, exec GormExecutor, address string) (bool, error) {
+func (r *libraryRepository) LibraryExistsByID(ctx context.Context, exec GormExecutor, id int) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM libraries WHERE id = $1)`
+
+	var exists bool
+	err := exec.QueryRowContext(ctx, query, id).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check library existence: %w", err)
+	}
+
+	return exists, nil
+}
+
+func (r *libraryRepository) LibraryExistsByAddress(ctx context.Context, exec GormExecutor, address string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM libraries WHERE address = $1)`
 
 	var exists bool
@@ -370,4 +386,16 @@ func (r *libraryRepository) UpdateLibraryEmployeePosition(ctx context.Context, e
 	`
 	_, err := exec.ExecContext(ctx, query, newPos, libraryID, memberID, oldPos)
 	return err
+}
+
+func (r *libraryRepository) HasBooksInInventory(ctx context.Context, exec GormExecutor, libraryID int) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM book_inventory WHERE library_id = $1)`
+
+	var hasBooks bool
+	err := exec.QueryRowContext(ctx, query, libraryID).Scan(&hasBooks)
+	if err != nil {
+		return false, fmt.Errorf("failed to check book inventory for library %d: %w", libraryID, err)
+	}
+
+	return hasBooks, nil
 }

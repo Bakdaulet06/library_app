@@ -22,6 +22,10 @@ type GenreRepository interface {
 	GetAll(ctx context.Context, exec GormExecutor, p params.Pagination) ([]models.Genre, error)
 	Update(ctx context.Context, exec GormExecutor, genre *models.Genre) error
 	Delete(ctx context.Context, exec GormExecutor, id int) error
+
+	ExistsByID(ctx context.Context, exec GormExecutor, id int) (bool, error)
+	ExistsByName(ctx context.Context, exec GormExecutor, name string) (bool, error)
+	HasBookWithThisGenre(ctx context.Context, exec GormExecutor, genreID int) (bool, error)
 }
 
 type genreRepository struct {
@@ -157,4 +161,41 @@ func (r *genreRepository) Delete(ctx context.Context, exec GormExecutor, id int)
 		return ErrGenreNotFound
 	}
 	return nil
+}
+
+func (r *genreRepository) HasBookWithThisGenre(ctx context.Context, exec GormExecutor, genreID int) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM books WHERE genre_id = $1)`
+
+	var exists bool
+	err := exec.QueryRowContext(ctx, query, genreID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if books are linked to genre %d: %w", genreID, err)
+	}
+
+	return exists, nil
+}
+
+func (r *genreRepository) ExistsByID(ctx context.Context, exec GormExecutor, id int) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM genres WHERE id = $1)`
+
+	var exists bool
+	err := exec.QueryRowContext(ctx, query, id).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check genre existence by ID %d: %w", id, err)
+	}
+
+	return exists, nil
+}
+
+// ExistsByName checks if a genre exists by its name (case-insensitive)
+func (r *genreRepository) ExistsByName(ctx context.Context, exec GormExecutor, name string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM genres WHERE LOWER(name) = LOWER($1))`
+
+	var exists bool
+	err := exec.QueryRowContext(ctx, query, name).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("failed to check genre existence by name %s: %w", name, err)
+	}
+
+	return exists, nil
 }

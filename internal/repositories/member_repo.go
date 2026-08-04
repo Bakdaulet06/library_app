@@ -32,9 +32,9 @@ func (r *memberRepository) Create(ctx context.Context, exec GormExecutor, m *mod
 }
 
 func (r *memberRepository) GetByID(ctx context.Context, exec GormExecutor, id int) (*models.BookMember, error) {
-	query := `SELECT id, email, joined_at FROM members WHERE id = $1 AND role = 'client'`
+	query := `SELECT id, email, role, joined_at FROM members WHERE id = $1 AND role = 'client'`
 	var m models.BookMember
-	err := exec.QueryRowContext(ctx, query, id).Scan(&m.ID, &m.Email, &m.JoinedAt)
+	err := exec.QueryRowContext(ctx, query, id).Scan(&m.ID, &m.Email, &m.Role, &m.JoinedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
